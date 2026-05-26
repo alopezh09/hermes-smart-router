@@ -178,7 +178,7 @@ _DEFAULT_SIMPLE_PATTERNS = [
 # ---------------------------------------------------------------------------
 
 DEFAULT_ROUTES: List[Route] = [
-    Route(name="simple", provider="nous", model="deepseek-v4-free",
+    Route(name="simple", provider="nous", model="deepseek/deepseek-v4-flash:free",
           min_score=0, max_score=1, emoji="🟢"),
     Route(name="medium", provider="opencode-go", model="deepseek-v4-pro",
           min_score=2, max_score=5, emoji="🟡"),
@@ -372,7 +372,7 @@ def load_config(gateway: Any = None) -> RouterConfig:
         show_route_footer=bool(section.get("show_route_footer", True)),
         llm_classifier_enabled=bool(section.get("llm_classifier_enabled", False)),
         llm_classifier_provider=str(section.get("llm_classifier_provider", "nous")),
-        llm_classifier_model=str(section.get("llm_classifier_model", "deepseek-v4-free")),
+        llm_classifier_model=str(section.get("llm_classifier_model", "deepseek/deepseek-v4-flash:free")),
         routes=_load_routes(raw_routes),
         scoring=_load_scoring(raw_scoring),
         patterns=_load_patterns(raw_patterns),
