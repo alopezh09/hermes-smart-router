@@ -161,6 +161,9 @@ _DEFAULT_COMPLEX_PATTERNS = [
     r"\bdesde cero\b",
     r"\bfrom scratch\b",
     r"\bbuild\b",
+    # ── Creation verbs with tech context ──
+    r"\bcre(a|ar|ame|alo|ala)\b.{0,15}(app|aplicación|sistema|proyecto|web|software|servicio|api)\b",
+    r"\bhac(er|eme|eme|ele)\b.{0,15}(un|una)\b.{0,10}(app|aplicación|sistema|proyecto|web)\b",
     # ── App / platform references ──
     r"\bapp\b",
     r"\baplicaci[óo]n\b",
@@ -174,13 +177,19 @@ _DEFAULT_COMPLEX_PATTERNS = [
     r"\bfrontend\b",
     r"\bfront[- ]?end\b",
     r"\bfull[- ]?stack\b",
+    r"\bfront\b",  # "front y backend" = complex
+    r"\bserver\b",
+    r"\bservidor\b",
+    r"\bintegr(a|ar|ción|ation)\b",
+    r"\bautenticaci[óo]n\b",
+    r"\blogin\b.{0,10}(sistema|system|con)\b",
     # ── Databases & storage (knowledge terms → medium) ──
     # ── APIs & integration (knowledge terms → medium) ──
     # ── Infrastructure → keep only action/build infra ──
     # ── Finance & business (domain-specific) ──
-    r"\bfinanciero\b",
+    r"\bfinancier(o|a|os|as)\b",
     r"\bfinancial\b",
-    r"\bbanc(o|ario|a)\b",
+    r"\bbanc(o|a|os|as|ario|aria)\b",
     r"\bbanking\b",
     r"\btransacci[óo]n\b",
     r"\bpago\b",
