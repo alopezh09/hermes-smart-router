@@ -3,6 +3,9 @@
 Two classification strategies:
 1. Regex-based (fast, free, default) — uses pattern matching and heuristics
 2. LLM-based (optional, configurable) — calls a cheap LLM for uncertain cases
+
+Both strategies support user-configurable scoring weights and regex patterns
+via ``ScoringConfig`` and ``PatternConfig`` from ``config.py``.
 """
 
 from __future__ import annotations
@@ -13,6 +16,8 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Literal, Optional
+
+from .config import ScoringConfig, PatternConfig
 
 logger = logging.getLogger(__name__)
 
@@ -26,58 +31,40 @@ class Classification:
     reason: str
 
 
-COMPLEX_PATTERNS = [
-    r"\bimplement(a|ar|ación|ation)?\b",
-    r"\brefactor\b",
-    r"\bdebug\b",
-    r"\bbug\b",
-    r"\btest(s|ing)?\b",
-    r"\bdeploy\b",
-    r"\bproduction\b",
-    r"\barchitecture\b",
-    r"\barquitectura\b",
-    r"\bplugin\b",
-    r"\bgithub\b",
-    r"\bpull request\b|\bPR\b",
-    r"\bcodebase\b",
-    r"\brepo(sitory)?\b",
-    r"\bbase de código\b",
-    r"\bend[- ]?to[- ]?end\b",
-    r"\bcompleto\b",
-    r"\bautomatiz(a|ar|ación)\b",
-    r"\bcompilador\b",
-    r"\bcompiler\b",
-    r"\bdesde cero\b",
-    r"\bfrom scratch\b",
-]
-
-MEDIUM_PATTERNS = [
-    r"\bexplica(r|me)?\b",
-    r"\bexplícame\b",
-    r"\bresume(n|ir)?\b",
-    r"\bcompara(r)?\b",
-    r"\bplan\b",
-    r"\bdiseña(r)?\b",
-    r"\banaliza(r)?\b",
-    r"\bescribe\b",
-    r"\bdraft\b",
-    r"\bmejora(r)?\b",
-]
-
-SIMPLE_PATTERNS = [
-    r"^(ok|dale|gracias|perfecto|sí|si|no|listo|va|claro)[.!\s]*$",
-    r"\bqué hora\b",
-    r"\bcuánto es\b",
-    r"\bdefine\b",
-]
+# Backward-compatible aliases for the old hardcoded lists.
+# New code should use PatternConfig instead.
+_COMPLEX_PATTERNS = PatternConfig().complex
+_MEDIUM_PATTERNS = PatternConfig().medium
+_SIMPLE_PATTERNS = PatternConfig().simple
 
 
 def _count_matches(patterns: list[str], text: str) -> int:
     return sum(1 for pattern in patterns if re.search(pattern, text, re.IGNORECASE))
 
 
-def classify_message(text: str) -> Classification:
-    """Classify an incoming message as simple, medium, or complex."""
+def classify_message(
+    text: str,
+    scoring: Optional[ScoringConfig] = None,
+    patterns: Optional[PatternConfig] = None,
+) -> Classification:
+    """Classify an incoming message as simple, medium, or complex.
+
+    Parameters
+    ----------
+    text:
+        The incoming message text.
+    scoring:
+        Optional :class:`ScoringConfig` with custom weights. Defaults to the
+        built-in defaults when omitted (backward-compatible).
+    patterns:
+        Optional :class:`PatternConfig` with custom regex lists. Defaults to the
+        built-in patterns when omitted (backward-compatible).
+    """
+    if scoring is None:
+        scoring = ScoringConfig()
+    if patterns is None:
+        patterns = PatternConfig()
+
     normalized = " ".join((text or "").strip().split())
     if not normalized:
         return Classification("simple", 0, "empty message")
@@ -85,26 +72,34 @@ def classify_message(text: str) -> Classification:
     words = normalized.split()
     word_count = len(words)
     has_code_block = "```" in normalized
-    has_many_requirements = sum(token in normalized for token in ["\n-", " 1.", " 2.", ";", " y ", " and "])
+    has_many_requirements = sum(
+        token in normalized
+        for token in ["\n-", " 1.", " 2.", ";", " y ", " and "]
+    )
 
-    simple_hits = _count_matches(SIMPLE_PATTERNS, normalized)
-    medium_hits = _count_matches(MEDIUM_PATTERNS, normalized)
-    complex_hits = _count_matches(COMPLEX_PATTERNS, normalized)
+    simple_hits = _count_matches(patterns.simple, normalized)
+    medium_hits = _count_matches(patterns.medium, normalized)
+    complex_hits = _count_matches(patterns.complex, normalized)
 
     score = 0
-    score += medium_hits * 2
-    score += complex_hits * 4
-    score += 5 if has_code_block else 0
-    score += 3 if word_count >= 80 else 0
-    score += 2 if word_count >= 35 else 0
-    score += min(has_many_requirements, 3)
-    score -= simple_hits * 3
+    score += medium_hits * scoring.weight_medium_pattern
+    score += complex_hits * scoring.weight_complex_pattern
+    score += scoring.weight_code_block if has_code_block else 0
+    score += scoring.weight_very_long if word_count >= 80 else 0
+    score += scoring.weight_long if word_count >= 35 else 0
+    score += min(has_many_requirements, 3) * scoring.weight_requirement_list
+    score += simple_hits * scoring.weight_simple_pattern
 
-    if score >= 6:
-        return Classification("complex", score, "complexity score >= 6")
-    if score >= 2:
-        return Classification("medium", score, "complexity score >= 2")
+    if score >= scoring.complex_threshold:
+        return Classification("complex", score, f"complexity score >= {scoring.complex_threshold}")
+    if score >= scoring.medium_threshold:
+        return Classification("medium", score, f"complexity score >= {scoring.medium_threshold}")
     return Classification("simple", score, "low complexity score")
+
+
+# ---------------------------------------------------------------------------
+# LLM-based classifier (optional, configurable)
+# ---------------------------------------------------------------------------
 
 
 def llm_classify_message(
@@ -113,13 +108,15 @@ def llm_classify_message(
     model: str = "deepseek-v4-free",
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
+    scoring: Optional[ScoringConfig] = None,
+    patterns: Optional[PatternConfig] = None,
 ) -> Classification:
     """Classify using an LLM, falling back to regex on any failure.
 
     The LLM is called with a simple system prompt asking it to classify
     the message as simple/medium/complex and return JSON. On failure
     (network error, timeout, bad response), we silently fall back to
-    the regex-based classify_message().
+    the regex-based :func:`classify_message`.
 
     Environment variables for API keys are resolved automatically:
     - ``NOUS_API_KEY`` for nous provider
@@ -134,7 +131,7 @@ def llm_classify_message(
         logger.debug("LLM classifier failed, falling back to regex", exc_info=True)
 
     # Fall back to regex-based classification
-    return classify_message(text)
+    return classify_message(text, scoring=scoring, patterns=patterns)
 
 
 def _resolve_api_key(provider: str, api_key: Optional[str] = None) -> Optional[str]:

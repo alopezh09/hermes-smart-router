@@ -1,16 +1,113 @@
+# ── Smart Router ───────────────────────────────────────────────────────────
 # Add this section to ~/.hermes/config.yaml after installing/enabling the plugin.
 # Secrets should stay in Hermes auth/.env/provider config, not here.
+#
+# TWO FORMATS SUPPORTED:
+#
+# 1) NEW PARAMETRIZABLE FORMAT (recommended)
+#    Define routes as a list with score ranges, custom scoring weights,
+#    and your own regex patterns.
+#
+# 2) LEGACY DICT FORMAT (backward-compatible)
+#    {simple: {provider, model}, medium: {...}, complex: {...}}
+#    Still works. Automatically converted internally.
+# ────────────────────────────────────────────────────────────────────────────
 smart_router:
   enabled: true
+
+  # Dry-run mode: log routing decisions but don't apply them.
   dry_run: false
+
+  # Respect manual /model switches. If the user already chose a model,
+  # the router won't override it.
   respect_manual_override: true
+
+  # Show a small footer at the end of each response indicating which
+  # route/provider/model was used.
+  show_route_footer: true
+
+  # ── Routes ──────────────────────────────────────────────────────────────
+  # Each route defines a score range, a friendly name, an emoji, and the
+  # provider/model to use when the classifier score falls in that range.
+  #
+  # Score ranges are INCLUSIVE (min_score <= score <= max_score).
+  # Routes are evaluated in order; the FIRST match wins.
+  # ─────────────────────────────────────────────────────────────────────────
   routes:
-    simple:
+    - name: cheap
+      emoji: "🟢"
+      min_score: 0
+      max_score: 1
       provider: nous
       model: deepseek-v4-free
-    medium:
+
+    - name: standard
+      emoji: "🟡"
+      min_score: 2
+      max_score: 5
       provider: opencode-go
       model: deepseek-v4-pro
-    complex:
+
+    - name: premium
+      emoji: "🔴"
+      min_score: 6
+      max_score: 999
       provider: openai-codex
       model: gpt-5.5
+
+  # ── Scoring weights ─────────────────────────────────────────────────────
+  # Control how the regex classifier computes complexity scores.
+  # All values are optional; defaults shown below.
+  # ─────────────────────────────────────────────────────────────────────────
+  scoring:
+    weight_complex_pattern: 4   # points per complex regex match
+    weight_medium_pattern: 2    # points per medium regex match
+    weight_simple_pattern: -3   # points SUBTRACTED per simple match
+    weight_code_block: 5        # points if message contains code blocks
+    weight_very_long: 3         # points if message has 80+ words
+    weight_long: 2              # points if message has 35+ words
+    weight_requirement_list: 1  # points per bullet/list marker (max 3)
+    complex_threshold: 6        # score >= this → complex (legacy compat)
+    medium_threshold: 2         # score >= this → medium (legacy compat)
+
+  # ── Regex patterns ──────────────────────────────────────────────────────
+  # Define which words/phrases trigger each complexity tier.
+  # Patterns use Python regex syntax and are matched IGNORECASE.
+  # All lists are optional; defaults shown below.
+  # ─────────────────────────────────────────────────────────────────────────
+  patterns:
+    complex:
+      - "implement(a|ar|ación|ation)?"
+      - "refactor"
+      - "debug"
+      - "bug"
+      - "test(s|ing)?"
+      - "deploy"
+      - "production"
+      - "architecture|arquitectura"
+      - "plugin"
+      - "github"
+      - "pull request|PR"
+      - "codebase"
+      - "repo(sitory)?"
+      - "base de código"
+      - "end[- ]?to[- ]?end"
+      - "completo"
+      - "automatiz(a|ar|ación)"
+      - "compilador|compiler"
+      - "desde cero|from scratch"
+    medium:
+      - "explica(r|me)?|explícame"
+      - "resume(n|ir)?"
+      - "compara(r)?"
+      - "plan"
+      - "diseña(r)?"
+      - "analiza(r)?"
+      - "describe"
+      - "draft"
+      - "mejora(r)?"
+    simple:
+      - "^(ok|dale|gracias|perfecto|sí|si|no|listo|va|claro|hola)[!.]*$"
+      - "qué hora"
+      - "cuánto es"
+      - "define"

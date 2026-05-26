@@ -87,3 +87,62 @@ def test_dry_run_command_classifies_free_text_without_toggling_mode():
     assert "complex" in result["text"]
     assert "openai-codex/gpt-5.5" in result["text"]
     assert not hasattr(gateway, "_smart_router_runtime_config")
+
+
+def test_custom_route_list_in_config():
+    """New list format with custom route names and score ranges."""
+    gateway = FakeGateway({
+        "smart_router": {
+            "routes": [
+                {"name": "quick", "min_score": 0, "max_score": 2,
+                 "provider": "nous", "model": "free-fast"},
+                {"name": "heavy", "min_score": 3, "max_score": 999,
+                 "provider": "openai", "model": "gpt5-custom"},
+            ]
+        }
+    })
+    # Complex message → high score → "heavy" route
+    result = route_gateway_message(event("Implementa un plugin con tests, CI/CD y deploy"), gateway)
+    assert result == {"action": "allow"}
+    override = gateway._session_model_overrides["telegram:1:2"]
+    assert override["provider"] == "openai"
+    assert override["model"] == "gpt5-custom"
+
+
+def test_custom_scoring_in_router_config():
+    """Custom scoring weights should affect classification inside the router hook."""
+    gateway = FakeGateway({
+        "smart_router": {
+            "scoring": {
+                "weight_complex_pattern": 1,   # very low → hard to reach complex
+                "weight_medium_pattern": 1,
+                "complex_threshold": 50,        # essentially unreachable
+            }
+        }
+    })
+    route_gateway_message(event("Implementa un plugin con tests y GitHub Actions"), gateway)
+    override = gateway._session_model_overrides.get("telegram:1:2", {})
+    # With complex basically disabled, should fall to a lower tier
+    assert override.get("provider") != "openai-codex"
+
+
+def test_four_tier_router_config():
+    """User defines 4 custom tiers and the router picks the right one."""
+    gateway = FakeGateway({
+        "smart_router": {
+            "routes": [
+                {"name": "trivial", "min_score": 0, "max_score": 0,
+                 "emoji": "⚪", "provider": "nous", "model": "free"},
+                {"name": "simple", "min_score": 1, "max_score": 2,
+                 "emoji": "🟢", "provider": "nous", "model": "free"},
+                {"name": "medium", "min_score": 3, "max_score": 6,
+                 "emoji": "🟡", "provider": "opencode", "model": "pro"},
+                {"name": "hard", "min_score": 7, "max_score": 999,
+                 "emoji": "🔴", "provider": "openai", "model": "gpt5"},
+            ]
+        }
+    })
+    route_gateway_message(event("gracias"), gateway)
+    override = gateway._session_model_overrides["telegram:1:2"]
+    assert override["provider"] == "nous"
+    assert override["_smart_router_route"] == "trivial"

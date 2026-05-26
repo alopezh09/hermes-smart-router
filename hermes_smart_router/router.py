@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from .classifier import classify_message, llm_classify_message
-from .config import load_config
+from .config import load_config, Route, ScoringConfig, PatternConfig
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,10 @@ def _is_manual_override(existing: Any) -> bool:
     return isinstance(existing, dict) and bool(existing) and not existing.get("_smart_router")
 
 
+# ---------------------------------------------------------------------------
+# Slash command handling
+# ---------------------------------------------------------------------------
+
 def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
     """Handle /smart-router slash commands. Returns action dict or None."""
     text = (event.text or "").strip()
@@ -64,11 +68,9 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
             "",
             "**Routes:**",
         ]
-        for complexity in ("simple", "medium", "complex"):
-            route = cfg.routes.get(complexity)
-            if route:
-                icon = {"simple": "🟢", "medium": "🟡", "complex": "🔴"}.get(complexity, "⚪")
-                lines.append(f"  {icon} {complexity}: `{route.provider}/{route.model}`")
+        for route in cfg.routes:
+            lines.append(f"  {route.emoji} `{route.name}` ({route.min_score}-{route.max_score}): `{route.provider}/{route.model}`")
+        _ = lines
 
         # Try to send response directly via adapter
         adapter = gateway.adapters.get(source.platform) if hasattr(gateway, "adapters") else None
@@ -131,6 +133,8 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
             "• `/smart-router dry-run on|off` — toggle dry-run\n"
             "• `/smart-router footer on|off` — toggle route footer\n"
             "• `/smart-router classifier llm|regex` — switch classifier mode\n"
+            "• `/smart-router classifier <message>` — classify a message\n"
+            "• `/smart-router dry-run <message>` — preview route\n"
             "• `/smart-router help` — this help"
         )
         return _reply_or_rewrite(gateway, source, help_text)
@@ -147,7 +151,7 @@ def _toggle_config(gateway: Any, key: str, value: Any) -> None:
 
 def _reply_or_rewrite(gateway: Any, source: Any, message: str) -> dict:
     """Try to send a direct reply via adapter, fall back to rewrite.
-    
+
     Returns SKIP if direct send works, otherwise returns rewrite action
     so the agent processes the message as a normal prompt.
     """
@@ -171,19 +175,46 @@ def _format_classification_preview(text: str, cfg: Any, title: str = "Smart Rout
             text,
             provider=cfg.llm_classifier_provider,
             model=cfg.llm_classifier_model,
+            scoring=cfg.scoring,
+            patterns=cfg.patterns,
         )
         mode = "llm"
     else:
-        classification = classify_message(text)
+        classification = classify_message(text, scoring=cfg.scoring, patterns=cfg.patterns)
         mode = "regex"
-    route = cfg.route_for(classification.complexity)
-    emoji = {"simple": "🟢", "medium": "🟡", "complex": "🔴"}.get(classification.complexity, "⚪")
+
+    route = cfg.route_for_score(classification.score)
     return (
         f"{title}\n"
-        f"{emoji} {classification.complexity} → `{route.provider}/{route.model}` (score: {classification.score})\n"
+        f"{route.emoji} {route.name} → `{route.provider}/{route.model}` (score: {classification.score})\n"
         f"Mode: {mode}\n"
         f"Reason: {classification.reason}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Runtime resolution
+# ---------------------------------------------------------------------------
+
+_KNOWN_ENV_KEYS = {
+    "opencode-go": "OPENCODE_GO_API_KEY",
+    "openai-codex": "OPENAI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "nous": "NOUS_API_KEY",
+}
+
+_KNOWN_BASE_URLS = {
+    "opencode-go": "https://opencode.ai/zen/go/v1",
+    "openai-codex": "https://chatgpt.com/backend-api/codex",
+    "openai": "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "nous": "https://inference-api.nousresearch.com/v1",
+}
+
+_KNOWN_API_MODES = {
+    "openai-codex": "codex_responses",
+}
 
 
 def _resolve_route_runtime(route: Any) -> dict:
@@ -212,32 +243,18 @@ def _resolve_route_runtime(route: Any) -> dict:
     except Exception:
         logger.debug("Could not resolve runtime for provider %s; using static fallbacks", route.provider, exc_info=True)
 
-    env_keys = {
-        "opencode-go": "OPENCODE_GO_API_KEY",
-        "openai-codex": "OPENAI_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-        "nous": "NOUS_API_KEY",
-    }
-    base_urls = {
-        "opencode-go": "https://opencode.ai/zen/go/v1",
-        "openai-codex": "https://chatgpt.com/backend-api/codex",
-        "openai": "https://api.openai.com/v1",
-        "deepseek": "https://api.deepseek.com/v1",
-        "nous": "https://inference-api.nousresearch.com/v1",
-    }
-    api_modes = {
-        "openai-codex": "codex_responses",
-    }
-
     if not runtime.get("api_key"):
-        env_key = env_keys.get(route.provider)
+        env_key = _KNOWN_ENV_KEYS.get(route.provider)
         if env_key:
             runtime["api_key"] = os.getenv(env_key)
-    runtime["base_url"] = route.base_url or runtime.get("base_url") or base_urls.get(route.provider)
-    runtime["api_mode"] = route.api_mode or runtime.get("api_mode") or api_modes.get(route.provider) or "chat_completions"
+    runtime["base_url"] = route.base_url or runtime.get("base_url") or _KNOWN_BASE_URLS.get(route.provider)
+    runtime["api_mode"] = route.api_mode or runtime.get("api_mode") or _KNOWN_API_MODES.get(route.provider) or "chat_completions"
     return runtime
 
+
+# ---------------------------------------------------------------------------
+# Config with runtime overrides
+# ---------------------------------------------------------------------------
 
 def _get_effective_config(gateway: Any) -> Any:
     """Load config and apply runtime overrides from slash commands."""
@@ -254,7 +271,12 @@ def _get_effective_config(gateway: Any) -> Any:
     return cfg
 
 
-def route_gateway_message(event: Any = None, gateway: Any = None, session_store: Any = None, **kwargs: Any) -> dict:
+# ---------------------------------------------------------------------------
+# Main hook: route_gateway_message
+# ---------------------------------------------------------------------------
+
+def route_gateway_message(event: Any = None, gateway: Any = None,
+                          session_store: Any = None, **kwargs: Any) -> dict:
     """Route one inbound gateway message to a provider/model.
 
     This hook must fail open. If anything about the Hermes version or gateway
@@ -303,11 +325,14 @@ def route_gateway_message(event: Any = None, gateway: Any = None, session_store:
                 text,
                 provider=cfg.llm_classifier_provider,
                 model=cfg.llm_classifier_model,
+                scoring=cfg.scoring,
+                patterns=cfg.patterns,
             )
         else:
-            classification = classify_message(text)
+            classification = classify_message(text, scoring=cfg.scoring, patterns=cfg.patterns)
 
-        route = cfg.route_for(classification.complexity)
+        # Route by score — uses the new parametrizable score-range model
+        route = cfg.route_for_score(classification.score)
         override = route.as_override()
         runtime = _resolve_route_runtime(route)
         for key in ("api_key", "base_url", "api_mode"):
@@ -319,11 +344,12 @@ def route_gateway_message(event: Any = None, gateway: Any = None, session_store:
         # Store routing decision for the footer hook
         decisions = _get_decisions_store(gateway)
         decisions[session_key] = {
-            "complexity": classification.complexity,
+            "complexity": route.name,
             "provider": route.provider,
             "model": route.model,
             "score": classification.score,
             "reason": classification.reason,
+            "emoji": route.emoji,
         }
 
         if cfg.dry_run:
@@ -359,6 +385,10 @@ def route_gateway_message(event: Any = None, gateway: Any = None, session_store:
         return _ALLOW
 
 
+# ---------------------------------------------------------------------------
+# Footer hook: transform_llm_output
+# ---------------------------------------------------------------------------
+
 def transform_llm_output(response_text: str = "", session_id: str = "",
                           model: str = "", platform: str = "",
                           **kwargs: Any) -> Optional[str]:
@@ -373,7 +403,6 @@ def transform_llm_output(response_text: str = "", session_id: str = "",
 
         gateway = kwargs.get("gateway")
         if gateway is None:
-            # Try to get the gateway from the global plugin context
             return None
 
         cfg = _get_effective_config(gateway)
@@ -385,13 +414,13 @@ def transform_llm_output(response_text: str = "", session_id: str = "",
             return None
 
         info = decisions.pop(session_id)  # One-shot: clean up after reading
-        complexity = info["complexity"]
+        route_name = info["complexity"]
         provider = info["provider"]
         route_model = info["model"]
         score = info["score"]
+        emoji = info.get("emoji", "⚪")
 
-        emoji = {"simple": "🟢", "medium": "🟡", "complex": "🔴"}.get(complexity, "⚪")
-        footer = f"\n\n---\n{emoji} *Smart Router: {complexity} → `{provider}/{route_model}` (score: {score})*"
+        footer = f"\n\n---\n{emoji} *Smart Router: {route_name} → `{provider}/{route_model}` (score: {score})*"
 
         return response_text + footer
     except Exception:
