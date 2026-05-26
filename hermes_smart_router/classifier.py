@@ -74,7 +74,7 @@ def classify_message(
     has_code_block = "```" in normalized
     has_many_requirements = sum(
         token in normalized
-        for token in ["\n-", " 1.", " 2.", ";", " y ", " and "]
+        for token in ["\n-", "\n*", " 1.", " 2.", " 3.", "1)", "2)", "3)", ";", " y ", " and ", " también ", " además ", " also ", " plus "]
     )
 
     simple_hits = _count_matches(patterns.simple, normalized)
@@ -143,7 +143,7 @@ def _resolve_api_key(provider: str, api_key: Optional[str] = None) -> Optional[s
         "nous": "NOUS_API_KEY",
         "openai-codex": "OPENAI_API_KEY",
         "openai": "OPENAI_API_KEY",
-        "opencode-go": "DEEPSEEK_API_KEY",
+        "opencode-go": "OPENCODE_GO_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
     }
     env_var = env_map.get(provider)
@@ -165,7 +165,7 @@ def _resolve_base_url(provider: str, base_url: Optional[str] = None) -> Optional
         return base_url
 
     defaults = {
-        "nous": "https://api.nousresearch.com/v1",
+        "nous": "https://inference-api.nousresearch.com/v1",
         "openai-codex": "https://api.openai.com/v1",
         "openai": "https://api.openai.com/v1",
         "opencode-go": "https://api.deepseek.com/v1",
@@ -197,12 +197,22 @@ def _try_llm_classify(
     endpoint = f"{url.rstrip('/')}/chat/completions"
 
     system_prompt = (
-        "You are a task complexity classifier. Classify the user message as one of:\n"
-        '- "simple": greetings, thanks, yes/no, basic facts, simple lookups\n'
-        '- "medium": explanations, comparisons, planning, analysis, drafting\n'
-        '- "complex": implementation, debugging, refactoring, testing, deployment, architecture\n'
-        "Respond with ONLY valid JSON: {\"complexity\": \"...\", \"reason\": \"...\"}\n"
-        "No other text."
+        "You are a task complexity router. Classify the user message into one of three tiers.\n"
+        "Return ONLY valid JSON: {\"complexity\": \"simple|medium|complex\", \"score\": 0-10, \"reason\": \"brief explanation\"}\n\n"
+        "TIER DEFINITIONS:\n"
+        "- simple (score 0-1): Greetings, thanks, yes/no, basic facts, trivial lookups, chitchat.\n"
+        "- medium (score 2-5): Explanations, comparisons, planning, analysis, drafting, research, documentation.\n"
+        "- complex (score 6-10): Implementation, coding, debugging, refactoring, testing, deployment, architecture,\n"
+        "  building apps/systems/APIs, database design, security, infrastructure, DevOps, ML training,\n"
+        "  multi-step tasks, file manipulation, system configuration, full-stack development.\n\n"
+        "KEY INDICATORS OF COMPLEX (score 6+):\n"
+        "- Mentions of: app, application, backend, frontend, API, database, server, deploy, build, create, develop\n"
+        "- Building/creating something from scratch\n"
+        "- Multiple technologies or components mentioned together\n"
+        "- Financial/banking/transaction systems\n"
+        "- Code generation, refactoring, debugging\n"
+        "- End-to-end systems, full-stack projects\n\n"
+        "Be conservative: if unsure, prefer medium over simple, and complex over medium."
     )
 
     payload = json.dumps({
@@ -238,8 +248,18 @@ def _try_llm_classify(
         result = json.loads(content)
         complexity = result.get("complexity", "").lower()
         reason = result.get("reason", "LLM classified")
+        llm_score = result.get("score", None)
         if complexity in ("simple", "medium", "complex"):
-            return Classification(complexity, 99, reason)  # Score 99 = LLM-classified
+            # Use LLM's own score if provided, otherwise map label to score
+            if isinstance(llm_score, (int, float)) and 0 <= llm_score <= 10:
+                score = int(llm_score)
+            elif complexity == "complex":
+                score = 8
+            elif complexity == "medium":
+                score = 4
+            else:
+                score = 1
+            return Classification(complexity, score, reason)
     except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
         logger.debug("LLM classifier response parsing failed: %s", e)
         return None

@@ -32,10 +32,10 @@ def _make_cfg(routes=None, **kwargs):
         "smart_router": dict(
             routes=routes or [
                 {"name": "simple", "min_score": 0, "max_score": 1,
-                 "provider": "nous", "model": "deepseek-v4-free", "emoji": "🟢"},
-                {"name": "medium", "min_score": 2, "max_score": 5,
+                 "provider": "nous", "model": "deepseek/deepseek-v4-flash:free", "emoji": "🟢"},
+                {"name": "medium", "min_score": 2, "max_score": 6,
                  "provider": "opencode-go", "model": "deepseek-v4-pro", "emoji": "🟡"},
-                {"name": "complex", "min_score": 6, "max_score": 999,
+                {"name": "complex", "min_score": 7, "max_score": 999,
                  "provider": "openai-codex", "model": "gpt-5.5", "emoji": "🔴"},
             ],
             **kwargs,
@@ -80,7 +80,7 @@ class TestFormatRoutesTable:
     def test_shows_classifier_mode(self):
         cfg = _make_cfg()
         result = format_routes_table(cfg)
-        assert "regex" in result.lower() or "📋" in result
+        assert "llm" in result.lower() or "🤖" in result
 
     def test_shows_dry_run_status(self):
         cfg = _make_cfg(dry_run=True)

@@ -77,7 +77,7 @@ def test_classifier_command_classifies_free_text_without_reaching_agent():
     result = route_gateway_message(event("/smart-router classifier hola"), gateway)
     assert result["action"] == "rewrite"
     assert "simple" in result["text"]
-    assert "nous/deepseek-v4-free" in result["text"]
+    assert "nous/deepseek" in result["text"]
 
 
 def test_dry_run_command_classifies_free_text_without_toggling_mode():
