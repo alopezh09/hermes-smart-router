@@ -14,7 +14,8 @@ The first MVP uses deterministic local heuristics, so routing itself does not sp
 
 ## Support scope
 
-- ✅ Gateway inputs: Telegram, Discord, Slack, webhooks, and any other platform that goes through Hermes gateway dispatch.
+- ✅ **Currently tested and supported: Telegram gateway only.**
+- ⚠️ Other Hermes gateway platforms such as Discord, Slack, webhooks, etc. are not officially supported yet, even if parts of the hook design may be reusable later.
 - ⚠️ Direct CLI conversations are not routed yet by this plugin.
 - ✅ Fail-open: if the plugin cannot classify or cannot access Hermes gateway internals, Hermes continues with its normal configured model/fallbacks.
 
