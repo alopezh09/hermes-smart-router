@@ -1,0 +1,16 @@
+# Add this section to ~/.hermes/config.yaml after installing/enabling the plugin.
+# Secrets should stay in Hermes auth/.env/provider config, not here.
+smart_router:
+  enabled: true
+  dry_run: false
+  respect_manual_override: true
+  routes:
+    simple:
+      provider: nous
+      model: deepseek-v4-free
+    medium:
+      provider: opencode-go
+      model: deepseek-v4-pro
+    complex:
+      provider: openai-codex
+      model: gpt-5.5
