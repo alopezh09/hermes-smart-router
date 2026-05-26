@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional
 
 
@@ -35,6 +35,10 @@ class RouterConfig:
     enabled: bool
     dry_run: bool
     respect_manual_override: bool
+    show_route_footer: bool
+    llm_classifier_enabled: bool
+    llm_classifier_provider: str
+    llm_classifier_model: str
     routes: Dict[str, Route]
 
     def route_for(self, complexity: str) -> Route:
@@ -54,7 +58,9 @@ def _to_mapping(value: Any) -> Mapping[str, Any]:
     if value is None:
         return {}
     data = {}
-    for key in ("enabled", "dry_run", "respect_manual_override", "routes"):
+    for key in ("enabled", "dry_run", "respect_manual_override",
+                "show_route_footer", "llm_classifier_enabled",
+                "llm_classifier_provider", "llm_classifier_model", "routes"):
         if hasattr(value, key):
             data[key] = getattr(value, key)
     return data
@@ -84,7 +90,7 @@ def _route_from_mapping(name: str, raw: Any, fallback: Route) -> Route:
 
 
 def load_config(gateway: Any = None) -> RouterConfig:
-    """Load plugin config from `gateway.config.smart_router` if present.
+    """Load plugin config from ``gateway.config.smart_router`` if present.
 
     Defaults match Alfonso's target routing:
     - simple -> nous/deepseek-v4-free
@@ -103,5 +109,9 @@ def load_config(gateway: Any = None) -> RouterConfig:
         enabled=bool(section.get("enabled", True)),
         dry_run=bool(section.get("dry_run", False)),
         respect_manual_override=bool(section.get("respect_manual_override", True)),
+        show_route_footer=bool(section.get("show_route_footer", True)),
+        llm_classifier_enabled=bool(section.get("llm_classifier_enabled", False)),
+        llm_classifier_provider=str(section.get("llm_classifier_provider", "nous")),
+        llm_classifier_model=str(section.get("llm_classifier_model", "deepseek-v4-free")),
         routes=routes,
     )

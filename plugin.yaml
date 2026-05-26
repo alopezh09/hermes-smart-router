@@ -4,3 +4,4 @@ description: Dynamic and intelligent model router plugin for Hermes Agent. Class
 author: Alfonso López
 provides_hooks:
   - pre_gateway_dispatch
+  - transform_llm_output
