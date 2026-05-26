@@ -198,38 +198,73 @@ _KNOWN_API_MODES = {
 
 
 def _resolve_route_runtime(route: Any) -> dict:
-    """Resolve provider runtime fields so overrides don't reuse the old provider.
+    """Resolve provider runtime fields for the *target* provider.
 
-    Gateway runtime resolution starts from the globally configured provider. If a
-    Smart Router override only sets provider/model, stale base_url/api_mode from
-    the previous provider can survive. Resolve the target provider here and store
-    concrete runtime fields in the session override, matching what Hermes /model
-    does after a manual switch.
+    The Hermes gateway resolves runtime credentials once from the GLOBAL
+    provider (e.g. openai-codex) via ``_resolve_runtime_agent_kwargs()``.
+    When a session override changes the provider but the override has no
+    ``api_key``, the gateway keeps the global provider's stale credentials
+    — the agent ends up with ``provider=nous`` but
+    ``api_key=<openai-codex token>`` and ``base_url=<openai-codex URL>``.
+
+    This function calls ``resolve_runtime_provider(requested=route.provider)``
+    so that api_key, base_url, and api_mode all match the ROUTED provider.
+    All three fields are always included in the returned dict — even if
+    api_key is empty — so that ``_apply_session_model_override`` overwrites
+    the global provider's stale values.
     """
-    runtime: dict[str, Any] = {}
+    provider = route.provider
+    resolved_api_key = None
+    resolved_base_url = None
+    resolved_api_mode = None
+
     try:
         from hermes_cli.runtime_provider import resolve_runtime_provider
 
-        resolved = resolve_runtime_provider(
-            requested=route.provider,
+        _r = resolve_runtime_provider(
+            requested=provider,
             explicit_base_url=route.base_url,
             explicit_api_key=route.api_key,
         )
-        runtime.update({
-            "api_key": resolved.get("api_key"),
-            "base_url": resolved.get("base_url"),
-            "api_mode": resolved.get("api_mode"),
-        })
+        resolved_api_key = _r.get("api_key") or None
+        resolved_base_url = _r.get("base_url") or None
+        resolved_api_mode = _r.get("api_mode") or None
     except Exception:
-        logger.debug("Could not resolve runtime for provider %s; using static fallbacks", route.provider, exc_info=True)
+        logger.debug(
+            "resolve_runtime_provider failed for provider=%s; using env / static fallbacks",
+            provider, exc_info=True,
+        )
 
-    if not runtime.get("api_key"):
-        env_key = _KNOWN_ENV_KEYS.get(route.provider)
+    # api_key: explicit route config > runtime_provider > env var
+    api_key = route.api_key or resolved_api_key
+    if not api_key:
+        env_key = _KNOWN_ENV_KEYS.get(provider)
         if env_key:
-            runtime["api_key"] = os.getenv(env_key)
-    runtime["base_url"] = route.base_url or runtime.get("base_url") or _KNOWN_BASE_URLS.get(route.provider)
-    runtime["api_mode"] = route.api_mode or runtime.get("api_mode") or _KNOWN_API_MODES.get(route.provider) or "chat_completions"
-    return runtime
+            api_key = os.getenv(env_key)
+
+    # base_url MUST point at the TARGET provider.  A stale base_url from
+    # the global provider (e.g. openai-codex's URL) combined with
+    # provider="nous" causes API calls to fail with 404 / auth errors.
+    base_url = (
+        route.base_url
+        or resolved_base_url
+        or _KNOWN_BASE_URLS.get(provider)
+        or ""
+    )
+    api_mode = (
+        route.api_mode
+        or resolved_api_mode
+        or _KNOWN_API_MODES.get(provider)
+        or "chat_completions"
+    )
+
+    # Always include all three keys — even empty — so the gateway
+    # overwrites the global provider's stale values instead of merging.
+    return {
+        "api_key": api_key or "",
+        "base_url": base_url,
+        "api_mode": api_mode,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -315,9 +350,13 @@ def route_gateway_message(event: Any = None, gateway: Any = None,
         route = cfg.route_for_score(classification.score)
         override = route.as_override()
         runtime = _resolve_route_runtime(route)
+        # Always include api_key/base_url/api_mode in the override,
+        # even if empty.  The Hermes gateway skips None values in
+        # _apply_session_model_override but NOT empty strings — an
+        # empty api_key forces the agent to resolve credentials fresh
+        # for the target provider instead of reusing the global one.
         for key in ("api_key", "base_url", "api_mode"):
-            if runtime.get(key):
-                override[key] = runtime[key]
+            override[key] = runtime.get(key, "")
         override["_smart_router_reason"] = classification.reason
         override["_smart_router_score"] = classification.score
 
