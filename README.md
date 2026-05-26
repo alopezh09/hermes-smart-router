@@ -4,13 +4,13 @@ Dynamic and intelligent model router plugin for [Hermes Agent](https://hermes-ag
 
 ## What it does
 
-`hermes-smart-router` registers a `pre_gateway_dispatch` hook. Before a gateway message reaches the agent, the plugin classifies the message as:
+`hermes-smart-router` registers a `pre_gateway_dispatch` hook. Before a gateway message reaches the agent, the plugin classifies the message by complexity and routes it to the appropriate model:
 
-- `simple` -> `nous` / `deepseek-v4-free`
-- `medium` -> `opencode-go` / `deepseek-v4-pro`
-- `complex` -> `openai-codex` / `gpt-5.5`
+- `simple` (score 0-1) -> `nous` / `deepseek-v4-free`
+- `medium` (score 2-5) -> `opencode-go` / `deepseek-v4-pro`
+- `complex` (score 6+) -> `openai-codex` / `gpt-5.5`
 
-The first MVP uses deterministic local heuristics, so routing itself does not spend model tokens. Later versions can add optional cheap-LLM classification.
+All defaults are fully parametrizable — you can customize routes, score ranges, weights, and regex patterns from `config.yaml`.
 
 ## Support scope
 
@@ -36,11 +36,32 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
-For editable Hermes plugin discovery, either install with `hermes plugins install ...`, copy/symlink the repo into `~/.hermes/plugins/hermes-smart-router`, or rely on the pip entry point if Hermes is running in the same Python environment where this package is installed.
+## Slash Commands (Visual Configuration)
+
+You don't have to edit `config.yaml` manually. Use these in-chat commands:
+
+| Command | Description |
+|---------|-------------|
+| `/smart-router` | Visual status + routes table |
+| `/smart-router routes` | Detailed route table with score ranges |
+| `/smart-router models` | Discover available Hermes models (from your config) |
+| `/smart-router wizard` | Step-by-step interactive setup guide |
+| `/smart-router weights` | View scoring weights table |
+| `/smart-router patterns` | View regex patterns per tier |
+| `/smart-router routes add-snippet <name> <min> <max> <provider> <model> [emoji]` | Generate a ready-to-paste YAML snippet |
+| `/smart-router routes remove-snippet <name>` | Generate instructions to remove a route |
+| `/smart-router dry-run on\|off` | Toggle dry-run mode |
+| `/smart-router footer on\|off` | Toggle route footer |
+| `/smart-router classifier llm\|regex` | Switch classifier mode |
+| `/smart-router classifier <message>` | Classify a message |
+| `/smart-router dry-run <message>` | Preview which route would be used |
+| `/smart-router help` | Full command reference |
 
 ## Configuration
 
 Add this optional section to `~/.hermes/config.yaml`:
+
+### Minimal (legacy format, backward-compatible)
 
 ```yaml
 smart_router:
@@ -58,6 +79,60 @@ smart_router:
       provider: openai-codex
       model: gpt-5.5
 ```
+
+### Full (parametrizable format with custom score ranges)
+
+```yaml
+smart_router:
+  enabled: true
+  dry_run: false
+  show_route_footer: true
+  routes:
+    - name: cheap
+      emoji: "🟢"
+      min_score: 0
+      max_score: 1
+      provider: nous
+      model: deepseek-v4-free
+
+    - name: standard
+      emoji: "🟡"
+      min_score: 2
+      max_score: 5
+      provider: opencode-go
+      model: deepseek-v4-pro
+
+    - name: premium
+      emoji: "🔴"
+      min_score: 6
+      max_score: 999
+      provider: openai-codex
+      model: gpt-5.5
+
+  # Optional: custom scoring weights
+  scoring:
+    weight_complex_pattern: 4
+    weight_medium_pattern: 2
+    weight_simple_pattern: -3
+    weight_code_block: 5
+    weight_very_long: 3
+    weight_long: 2
+    weight_requirement_list: 1
+
+  # Optional: custom regex patterns
+  patterns:
+    complex:
+      - "implement(a|ar)?"
+      - "deploy"
+      - "plugin"
+    medium:
+      - "explica(r|me)?"
+      - "analiza(r)?"
+    simple:
+      - "^(ok|dale|gracias|hola)"
+```
+
+See `examples/config.yaml` for the complete reference.
 
 Do **not** put provider secrets in this repo. Keep API keys/OAuth credentials in Hermes auth, `.env`, or provider config.
 

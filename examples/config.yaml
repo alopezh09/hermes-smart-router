@@ -11,6 +11,21 @@
 # 2) LEGACY DICT FORMAT (backward-compatible)
 #    {simple: {provider, model}, medium: {...}, complex: {...}}
 #    Still works. Automatically converted internally.
+#
+# ── Visual Configuration (in-chat slash commands) ──────────────────────────
+# You don't HAVE to edit this file manually! Use these chat commands:
+#
+#   /smart-router                  — visual table of all routes + status
+#   /smart-router routes           — detailed route table with score ranges
+#   /smart-router models           — discover available Hermes models
+#   /smart-router wizard           — step-by-step interactive setup guide
+#   /smart-router weights          — view scoring weights table
+#   /smart-router patterns         — view regex patterns
+#   /smart-router routes add-snippet <name> <min> <max> <provider> <model>
+#                                  — generate a ready-to-paste YAML snippet
+#   /smart-router routes remove-snippet <name>
+#                                  — generate instructions to remove a route
+#   /smart-router help             — full command reference
 # ────────────────────────────────────────────────────────────────────────────
 smart_router:
   enabled: true

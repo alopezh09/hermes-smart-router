@@ -44,7 +44,12 @@ def _is_manual_override(existing: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
-    """Handle /smart-router slash commands. Returns action dict or None."""
+    """Handle /smart-router slash commands. Returns action dict or None.
+
+    Delegates display/formatting to :mod:`hermes_smart_router.commands`.
+    Toggle commands (dry-run, footer, classifier) remain here because they
+    modify runtime gateway state.
+    """
     text = (event.text or "").strip()
     if not text.startswith("/smart-router"):
         return None
@@ -53,41 +58,25 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
     if source is None:
         return _SKIP
 
-    cfg = load_config(gateway)
+    cfg = _get_effective_config(gateway)
     parts = text.split(maxsplit=1)
     subcommand = parts[1].strip() if len(parts) > 1 else ""
 
+    # ── Delegate to commands.py for display/report commands ──
+    from .commands import handle_slash_command as _cmd_handle
+    response = _cmd_handle(text, gateway, source, cfg)
+    if response is not None:
+        # Check if this is a toggle command that also needs side effects
+        if subcommand.startswith("dry-run") and not subcommand[len("dry-run"):].strip().lower() in ("on", "true", "1", "enable", "off", "false", "0", "disable", ""):
+            pass  # dry-run with a message: just display
+        elif subcommand.startswith("classifier") and not subcommand[len("classifier"):].strip().lower() in ("llm", "on", "true", "1", "enable", "regex", "off", "false", "0", "disable", ""):
+            pass  # classifier with a message: just display
+        return _reply_or_rewrite(gateway, source, response)
+
+    # ── Legacy / toggle commands (modify runtime state) ──
     if subcommand == "status" or subcommand == "":
-        lines = [
-            "**Smart Router Status**",
-            f"• Enabled: {'✅' if cfg.enabled else '❌'}",
-            f"• Dry-run: {'🔬' if cfg.dry_run else '🚀'}",
-            f"• Show footer: {'✅' if cfg.show_route_footer else '❌'}",
-            f"• LLM classifier: {'🤖' if cfg.llm_classifier_enabled else '📋 (regex)'}",
-            f"• Respect manual /model: {'✅' if cfg.respect_manual_override else '❌'}",
-            "",
-            "**Routes:**",
-        ]
-        for route in cfg.routes:
-            lines.append(f"  {route.emoji} `{route.name}` ({route.min_score}-{route.max_score}): `{route.provider}/{route.model}`")
-        _ = lines
-
-        # Try to send response directly via adapter
-        adapter = gateway.adapters.get(source.platform) if hasattr(gateway, "adapters") else None
-        if adapter and hasattr(adapter, "send"):
-            try:
-                import asyncio
-                chat_id = getattr(source, "chat_id", None)
-                if chat_id:
-                    asyncio.ensure_future(
-                        adapter.send(chat_id, "\n".join(lines))
-                    )
-                    return _SKIP
-            except Exception:
-                logger.debug("Could not send status via adapter, falling back to rewrite")
-
-        # Fallback: rewrite to a prompt the agent can answer
-        return {"action": "rewrite", "text": f"Show me the current Smart Router status:\n\n" + "\n".join(lines)}
+        # Already handled by commands.py above — but keep fallback
+        return _SKIP
 
     elif subcommand.startswith("dry-run"):
         arg = subcommand[len("dry-run"):].strip().lower()
@@ -127,17 +116,8 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
             return _reply_or_rewrite(gateway, source, f"Usage: `/smart-router classifier llm|regex` or `/smart-router classifier <message>`\nCurrent: {'llm' if cfg.llm_classifier_enabled else 'regex'}")
 
     elif subcommand == "help":
-        help_text = (
-            "**Smart Router Commands**\n"
-            "• `/smart-router` — show status\n"
-            "• `/smart-router dry-run on|off` — toggle dry-run\n"
-            "• `/smart-router footer on|off` — toggle route footer\n"
-            "• `/smart-router classifier llm|regex` — switch classifier mode\n"
-            "• `/smart-router classifier <message>` — classify a message\n"
-            "• `/smart-router dry-run <message>` — preview route\n"
-            "• `/smart-router help` — this help"
-        )
-        return _reply_or_rewrite(gateway, source, help_text)
+        # Already handled by commands.py above — keep fallback
+        return _SKIP
 
     return _SKIP
 
