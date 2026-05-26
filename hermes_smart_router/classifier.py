@@ -45,6 +45,10 @@ COMPLEX_PATTERNS = [
     r"\bend[- ]?to[- ]?end\b",
     r"\bcompleto\b",
     r"\bautomatiz(a|ar|ación)\b",
+    r"\bcompilador\b",
+    r"\bcompiler\b",
+    r"\bdesde cero\b",
+    r"\bfrom scratch\b",
 ]
 
 MEDIUM_PATTERNS = [

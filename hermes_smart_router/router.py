@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 from .classifier import classify_message, llm_classify_message
@@ -94,8 +95,10 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
         elif arg in ("off", "false", "0", "disable"):
             _toggle_config(gateway, "dry_run", False)
             return _reply_or_rewrite(gateway, source, "🚀 Smart Router dry-run mode **OFF** — routing will be applied normally.")
+        elif arg:
+            return _reply_or_rewrite(gateway, source, _format_classification_preview(arg, cfg, title="🔬 Smart Router dry-run"))
         else:
-            return _reply_or_rewrite(gateway, source, f"Usage: `/smart-router dry-run on|off`\nCurrent: {'on' if cfg.dry_run else 'off'}")
+            return _reply_or_rewrite(gateway, source, f"Usage: `/smart-router dry-run on|off` or `/smart-router dry-run <message>`\nCurrent: {'on' if cfg.dry_run else 'off'}")
 
     elif subcommand.startswith("footer"):
         arg = subcommand[len("footer"):].strip().lower()
@@ -116,8 +119,10 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
         elif arg in ("regex", "off", "false", "0", "disable"):
             _toggle_config(gateway, "llm_classifier_enabled", False)
             return _reply_or_rewrite(gateway, source, "📋 Smart Router classifier: **regex only**")
+        elif arg:
+            return _reply_or_rewrite(gateway, source, _format_classification_preview(arg, cfg, title="📋 Smart Router classifier"))
         else:
-            return _reply_or_rewrite(gateway, source, f"Usage: `/smart-router classifier llm|regex`\nCurrent: {'llm' if cfg.llm_classifier_enabled else 'regex'}")
+            return _reply_or_rewrite(gateway, source, f"Usage: `/smart-router classifier llm|regex` or `/smart-router classifier <message>`\nCurrent: {'llm' if cfg.llm_classifier_enabled else 'regex'}")
 
     elif subcommand == "help":
         help_text = (
@@ -157,6 +162,81 @@ def _reply_or_rewrite(gateway: Any, source: Any, message: str) -> dict:
         except Exception:
             logger.debug("Could not send direct reply, falling back to rewrite")
     return {"action": "rewrite", "text": message}
+
+
+def _format_classification_preview(text: str, cfg: Any, title: str = "Smart Router") -> str:
+    """Return a human-readable route preview without applying an override."""
+    if cfg.llm_classifier_enabled:
+        classification = llm_classify_message(
+            text,
+            provider=cfg.llm_classifier_provider,
+            model=cfg.llm_classifier_model,
+        )
+        mode = "llm"
+    else:
+        classification = classify_message(text)
+        mode = "regex"
+    route = cfg.route_for(classification.complexity)
+    emoji = {"simple": "🟢", "medium": "🟡", "complex": "🔴"}.get(classification.complexity, "⚪")
+    return (
+        f"{title}\n"
+        f"{emoji} {classification.complexity} → `{route.provider}/{route.model}` (score: {classification.score})\n"
+        f"Mode: {mode}\n"
+        f"Reason: {classification.reason}"
+    )
+
+
+def _resolve_route_runtime(route: Any) -> dict:
+    """Resolve provider runtime fields so overrides don't reuse the old provider.
+
+    Gateway runtime resolution starts from the globally configured provider. If a
+    Smart Router override only sets provider/model, stale base_url/api_mode from
+    the previous provider can survive. Resolve the target provider here and store
+    concrete runtime fields in the session override, matching what Hermes /model
+    does after a manual switch.
+    """
+    runtime: dict[str, Any] = {}
+    try:
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+
+        resolved = resolve_runtime_provider(
+            requested=route.provider,
+            explicit_base_url=route.base_url,
+            explicit_api_key=route.api_key,
+        )
+        runtime.update({
+            "api_key": resolved.get("api_key"),
+            "base_url": resolved.get("base_url"),
+            "api_mode": resolved.get("api_mode"),
+        })
+    except Exception:
+        logger.debug("Could not resolve runtime for provider %s; using static fallbacks", route.provider, exc_info=True)
+
+    env_keys = {
+        "opencode-go": "OPENCODE_GO_API_KEY",
+        "openai-codex": "OPENAI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "nous": "NOUS_API_KEY",
+    }
+    base_urls = {
+        "opencode-go": "https://opencode.ai/zen/go/v1",
+        "openai-codex": "https://chatgpt.com/backend-api/codex",
+        "openai": "https://api.openai.com/v1",
+        "deepseek": "https://api.deepseek.com/v1",
+        "nous": "https://inference-api.nousresearch.com/v1",
+    }
+    api_modes = {
+        "openai-codex": "codex_responses",
+    }
+
+    if not runtime.get("api_key"):
+        env_key = env_keys.get(route.provider)
+        if env_key:
+            runtime["api_key"] = os.getenv(env_key)
+    runtime["base_url"] = route.base_url or runtime.get("base_url") or base_urls.get(route.provider)
+    runtime["api_mode"] = route.api_mode or runtime.get("api_mode") or api_modes.get(route.provider) or "chat_completions"
+    return runtime
 
 
 def _get_effective_config(gateway: Any) -> Any:
@@ -229,6 +309,10 @@ def route_gateway_message(event: Any = None, gateway: Any = None, session_store:
 
         route = cfg.route_for(classification.complexity)
         override = route.as_override()
+        runtime = _resolve_route_runtime(route)
+        for key in ("api_key", "base_url", "api_mode"):
+            if runtime.get(key):
+                override[key] = runtime[key]
         override["_smart_router_reason"] = classification.reason
         override["_smart_router_score"] = classification.score
 
