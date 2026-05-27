@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
 from .config import ScoringConfig, PatternConfig
+from .providers import resolve_api_key, resolve_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -134,46 +134,6 @@ def llm_classify_message(
     return classify_message(text, scoring=scoring, patterns=patterns)
 
 
-def _resolve_api_key(provider: str, api_key: Optional[str] = None) -> Optional[str]:
-    """Resolve API key from param or environment."""
-    if api_key:
-        return api_key
-
-    env_map = {
-        "nous": "NOUS_API_KEY",
-        "openai-codex": "OPENAI_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "opencode-go": "OPENCODE_GO_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-    }
-    env_var = env_map.get(provider)
-    if env_var:
-        return os.environ.get(env_var)
-
-    # Generic fallback: try common env vars
-    for var in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "NOUS_API_KEY"):
-        key = os.environ.get(var)
-        if key:
-            return key
-
-    return None
-
-
-def _resolve_base_url(provider: str, base_url: Optional[str] = None) -> Optional[str]:
-    """Resolve base URL from param or known provider defaults."""
-    if base_url:
-        return base_url
-
-    defaults = {
-        "nous": "https://inference-api.nousresearch.com/v1",
-        "openai-codex": "https://api.openai.com/v1",
-        "openai": "https://api.openai.com/v1",
-        "opencode-go": "https://api.deepseek.com/v1",
-        "deepseek": "https://api.deepseek.com/v1",
-    }
-    return defaults.get(provider)
-
-
 def _try_llm_classify(
     text: str,
     provider: str,
@@ -184,12 +144,12 @@ def _try_llm_classify(
     """Attempt LLM classification. Returns None if anything fails."""
     import urllib.request
 
-    key = _resolve_api_key(provider, api_key)
+    key = resolve_api_key(provider, api_key)
     if not key:
         logger.debug("No API key available for LLM classifier (provider=%s)", provider)
         return None
 
-    url = _resolve_base_url(provider, base_url)
+    url = resolve_base_url(provider, base_url)
     if not url:
         logger.debug("No base URL for provider %s", provider)
         return None

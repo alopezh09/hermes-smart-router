@@ -500,8 +500,11 @@ def format_help() -> str:
         "• `/smart-router routes` — visual table of all routes\n"
         "• `/smart-router models` — discover available Hermes models\n"
         "• `/smart-router weights` — show scoring weights\n"
-        "• `/smart-router patterns` — show regex patterns\n\n"
+        "• `/smart-router patterns` — show regex patterns\n"
+        "• `/smart-router metrics` — show route usage metrics\n"
+        "• `/smart-router version` — show plugin version\n\n"
         "🧪 **Test & Classify**\n"
+        "• `/smart-router test <message>` — full classification breakdown\n"
         "• `/smart-router classifier <message>` — classify a message\n"
         "• `/smart-router dry-run <message>` — preview which route would be used\n\n"
         "⚙️ **Configure**\n"
@@ -662,5 +665,17 @@ def handle_slash_command(text: str, gateway: Any, source: Any, cfg: RouterConfig
     # ── Help ──
     if subcommand == "help":
         return format_help()
+
+    # ── Test (pass-through to router.py) ──
+    if subcommand.startswith("test"):
+        return None  # handled by router.py toggle section
+
+    # ── Metrics (pass-through to router.py) ──
+    if subcommand == "metrics":
+        return None  # handled by router.py toggle section
+
+    # ── Version (pass-through to router.py) ──
+    if subcommand == "version":
+        return None  # handled by router.py toggle section
 
     return None

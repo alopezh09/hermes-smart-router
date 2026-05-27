@@ -1,5 +1,5 @@
 name: hermes-smart-router
-version: 0.1.0
+version: 0.2.0
 description: Dynamic and intelligent model router plugin for Hermes Agent. Classifies intents and switches models on the fly.
 author: Alfonso López
 provides_hooks:

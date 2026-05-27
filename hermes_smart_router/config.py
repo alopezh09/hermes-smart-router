@@ -310,7 +310,7 @@ _DEFAULT_SIMPLE_PATTERNS = [
 # ---------------------------------------------------------------------------
 
 DEFAULT_ROUTES: List[Route] = [
-    Route(name="simple", provider="nous", model="deepseek/deepseek-v4-flash:free",
+    Route(name="simple", provider="nous", model="deepseek-v4-free",
           min_score=0, max_score=1, emoji="🟢"),
     Route(name="medium", provider="opencode-go", model="deepseek-v4-pro",
           min_score=2, max_score=6, emoji="🟡"),
@@ -418,12 +418,21 @@ def _load_routes_from_legacy_dict(raw: Mapping) -> List[Route]:
         "medium":  {"min_score": 2,  "max_score": 5, "emoji": "🟡"},
         "complex": {"min_score": 6,  "max_score": 999, "emoji": "🔴"},
     }
+
+    def _get_default_route(name: str) -> Route:
+        """Look up the built-in default route by *name*, not by list index."""
+        for r in DEFAULT_ROUTES:
+            if r.name == name:
+                return r
+        # Last-resort fallback — should never happen with built-in names
+        return DEFAULT_ROUTES[0]
+
     routes: List[Route] = []
     for name in ("simple", "medium", "complex"):
         entry = _to_mapping(raw.get(name))
         if not entry:
             legacy = _LEGACY_DEFAULTS[name]
-            fallback = DEFAULT_ROUTES[{"simple": 0, "medium": 1, "complex": 2}[name]]
+            fallback = _get_default_route(name)
             routes.append(Route(
                 name=name,
                 provider=fallback.provider,
@@ -434,7 +443,7 @@ def _load_routes_from_legacy_dict(raw: Mapping) -> List[Route]:
             ))
             continue
         legacy = _LEGACY_DEFAULTS[name]
-        fallback = DEFAULT_ROUTES[{"simple": 0, "medium": 1, "complex": 2}[name]]
+        fallback = _get_default_route(name)
         routes.append(Route(
             name=name,
             provider=str(entry.get("provider") or fallback.provider),
@@ -504,7 +513,7 @@ def load_config(gateway: Any = None) -> RouterConfig:
         show_route_footer=bool(section.get("show_route_footer", True)),
         llm_classifier_enabled=bool(section.get("llm_classifier_enabled", True)),
         llm_classifier_provider=str(section.get("llm_classifier_provider", "nous")),
-        llm_classifier_model=str(section.get("llm_classifier_model", "deepseek/deepseek-v4-flash:free")),
+        llm_classifier_model=str(section.get("llm_classifier_model", "deepseek-v4-free")),
         routes=_load_routes(raw_routes),
         scoring=_load_scoring(raw_scoring),
         patterns=_load_patterns(raw_patterns),

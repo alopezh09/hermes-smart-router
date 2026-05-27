@@ -7,7 +7,7 @@ this same function.
 
 from .router import route_gateway_message, transform_llm_output
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def register(ctx):

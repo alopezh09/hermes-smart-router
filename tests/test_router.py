@@ -48,7 +48,8 @@ def test_respects_manual_override_by_default():
     assert gateway._session_model_overrides[key] == {"provider": "custom", "model": "manual"}
 
 
-def test_dry_run_does_not_apply_override():
+def test_dry_run_does_not_apply_override(monkeypatch, tmp_path):
+    monkeypatch.setattr("hermes_smart_router.router._RUNTIME_STATE_PATH", tmp_path / "dryrun.json")
     gateway = FakeGateway({"smart_router": {"dry_run": True}})
     route_gateway_message(event("Implementa un plugin con tests"), gateway)
     assert gateway._session_model_overrides == {}
@@ -86,7 +87,9 @@ def test_dry_run_command_classifies_free_text_without_toggling_mode():
     assert result["action"] == "rewrite"
     assert "complex" in result["text"]
     assert "openai-codex/gpt-5.5" in result["text"]
-    assert not hasattr(gateway, "_smart_router_runtime_config")
+    # Runtime config attr exists (persistence init), but dry_run key is not toggled
+    runtime = getattr(gateway, "_smart_router_runtime_config", {})
+    assert not runtime.get("dry_run")
 
 
 def test_custom_route_list_in_config():
