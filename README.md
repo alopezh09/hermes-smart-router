@@ -1,14 +1,24 @@
-# hermes-smart-router
+# hermes-smart-router **v0.2.0**
 
-Dynamic and intelligent model router plugin for [Hermes Agent](https://hermes-agent.nousresearch.com/). It classifies incoming gateway messages and switches Hermes models on the fly.
+**Enterprise-grade intelligent model router for Hermes Agent.** LLM-based complexity classification with automatic provider/model routing. Classifies every incoming gateway message and switches Hermes models on the fly — no manual /model commands needed.
+
+## ✨ v0.2.0 Highlights
+
+- 🔄 **LLM classifier always-on** — no regex fallback, fail-open
+- 🧠 **Provider resolution through Hermes auth system** — no separate API keys
+- 📊 **Visual slash commands** — `/smart-router`, `/smart-router routes`, `/smart-router wizard`, `/smart-router classifier`, `/smart-router dry-run`
+- 🏷️ **Route footer** — shows which model handled each message
+- 🎯 **Respects manual `/model` overrides**
+- 🧪 **Full test suite** — 215+ tests
+- 🛡️ **Defensive runtime checks** — fails open on unsupported Hermes versions
 
 ## What it does
 
-`hermes-smart-router` registers a `pre_gateway_dispatch` hook. Before a gateway message reaches the agent, the plugin classifies the message by complexity and routes it to the appropriate model:
+`hermes-smart-router` registers `pre_gateway_dispatch` and `transform_llm_output` hooks. Before a gateway message reaches the agent, the plugin classifies it by complexity via LLM and routes to the appropriate model:
 
-- `simple` (score 0-1) -> `nous` / `deepseek-v4-free`
-- `medium` (score 2-5) -> `opencode-go` / `deepseek-v4-pro`
-- `complex` (score 6+) -> `openai-codex` / `gpt-5.5`
+- `simple` (score 0-1) → `nous` / `openrouter/owl-alpha`
+- `medium` (score 2-5) → `opencode-go` / `deepseek-v4-pro`
+- `complex` (score 6+) → `openai-codex` / `gpt-5.5`
 
 All defaults are fully parametrizable — you can customize routes, score ranges, weights, and regex patterns from `config.yaml`.
 
@@ -71,7 +81,7 @@ smart_router:
   routes:
     simple:
       provider: nous
-      model: deepseek-v4-free
+      model: openrouter/owl-alpha
     medium:
       provider: opencode-go
       model: deepseek-v4-pro
@@ -93,7 +103,7 @@ smart_router:
       min_score: 0
       max_score: 1
       provider: nous
-      model: deepseek-v4-free
+      model: openrouter/owl-alpha
 
     - name: standard
       emoji: "🟡"
