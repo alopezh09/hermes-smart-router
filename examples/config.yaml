@@ -33,6 +33,10 @@ smart_router:
   # Dry-run mode: log routing decisions but don't apply them.
   dry_run: false
 
+  # LLM classifier: uses a cheap LLM for uncertain cases.
+  # Requires valid API key (NOUS_API_KEY by default).
+  llm_classifier_enabled: false
+
   # Respect manual /model switches. If the user already chose a model,
   # the router won't override it.
   respect_manual_override: true
@@ -49,21 +53,21 @@ smart_router:
   # Routes are evaluated in order; the FIRST match wins.
   # ─────────────────────────────────────────────────────────────────────────
   routes:
-    - name: cheap
+    - name: simple
       emoji: "🟢"
       min_score: 0
       max_score: 1
       provider: nous
       model: deepseek-v4-free
 
-    - name: standard
+    - name: medium
       emoji: "🟡"
       min_score: 2
       max_score: 5
       provider: opencode-go
       model: deepseek-v4-pro
 
-    - name: premium
+    - name: complex
       emoji: "🔴"
       min_score: 6
       max_score: 999
@@ -75,7 +79,7 @@ smart_router:
   # All values are optional; defaults shown below.
   # ─────────────────────────────────────────────────────────────────────────
   scoring:
-    weight_complex_pattern: 4   # points per complex regex match
+    weight_complex_pattern: 6   # points per complex regex match
     weight_medium_pattern: 2    # points per medium regex match
     weight_simple_pattern: -3   # points SUBTRACTED per simple match
     weight_code_block: 5        # points if message contains code blocks

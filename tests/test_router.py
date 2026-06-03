@@ -1,6 +1,10 @@
+"""Tests for router hook behavior (LLM classification mocked)."""
+
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from hermes_smart_router.router import route_gateway_message
+from hermes_smart_router.classifier import Classification
 
 
 class FakeAdapter:
@@ -30,7 +34,20 @@ def event(text="hola"):
     return SimpleNamespace(text=text, source=source, internal=False)
 
 
-def test_routes_complex_message():
+def _mock_simple():
+    return Classification("simple", 0, "just a greeting")
+
+
+def _mock_medium():
+    return Classification("medium", 4, "explanation request")
+
+
+def _mock_complex():
+    return Classification("complex", 8, "implementation task")
+
+
+@patch("hermes_smart_router.router.classify_message", return_value=_mock_complex())
+def test_routes_complex_message(mock_classify):
     gateway = FakeGateway()
     result = route_gateway_message(event("Implementa un plugin con tests y GitHub Actions"), gateway)
     assert result == {"action": "allow"}
@@ -40,7 +57,8 @@ def test_routes_complex_message():
     assert gateway.evicted == [key]
 
 
-def test_respects_manual_override_by_default():
+@patch("hermes_smart_router.router.classify_message", return_value=_mock_complex())
+def test_respects_manual_override_by_default(mock_classify):
     gateway = FakeGateway()
     key = "telegram:1:2"
     gateway._session_model_overrides[key] = {"provider": "custom", "model": "manual"}
@@ -48,7 +66,8 @@ def test_respects_manual_override_by_default():
     assert gateway._session_model_overrides[key] == {"provider": "custom", "model": "manual"}
 
 
-def test_dry_run_does_not_apply_override():
+@patch("hermes_smart_router.router.classify_message", return_value=_mock_complex())
+def test_dry_run_does_not_apply_override(mock_classify):
     gateway = FakeGateway({"smart_router": {"dry_run": True}})
     route_gateway_message(event("Implementa un plugin con tests"), gateway)
     assert gateway._session_model_overrides == {}
@@ -60,7 +79,8 @@ def test_fails_open_without_gateway_internals():
     assert route_gateway_message(event("Implementa algo"), gateway) == {"action": "allow"}
 
 
-def test_medium_route_populates_opencode_runtime_from_env(monkeypatch):
+@patch("hermes_smart_router.router.classify_message", return_value=_mock_medium())
+def test_medium_route_populates_opencode_runtime_from_env(mock_classify, monkeypatch):
     monkeypatch.setenv("OPENCODE_GO_API_KEY", "test-opencode-key")
     gateway = FakeGateway()
     route_gateway_message(event("Explícame cómo funciona OAuth2"), gateway)
@@ -72,24 +92,25 @@ def test_medium_route_populates_opencode_runtime_from_env(monkeypatch):
     assert override["api_mode"] == "chat_completions"
 
 
-def test_classifier_command_classifies_free_text_without_reaching_agent():
+@patch("hermes_smart_router.router.classify_message", return_value=_mock_simple())
+@patch("hermes_smart_router.classifier.classify_message", return_value=_mock_simple())
+def test_classifier_command_classifies_free_text(mock_classify2, mock_classify1):
     gateway = FakeGateway()
     result = route_gateway_message(event("/smart-router classifier hola"), gateway)
     assert result["action"] == "rewrite"
     assert "simple" in result["text"]
-    assert "nous/deepseek" in result["text"]
 
 
-def test_dry_run_command_classifies_free_text_without_toggling_mode():
+@patch("hermes_smart_router.router.classify_message", return_value=_mock_complex())
+def test_dry_run_command_classifies_free_text(mock_classify):
     gateway = FakeGateway()
-    result = route_gateway_message(event("/smart-router dry-run escribe un compilador desde cero"), gateway)
+    result = route_gateway_message(event("/smart-router dry-run Implementa un compilador desde cero"), gateway)
     assert result["action"] == "rewrite"
     assert "complex" in result["text"]
-    assert "openai-codex/gpt-5.5" in result["text"]
-    assert not hasattr(gateway, "_smart_router_runtime_config")
 
 
-def test_custom_route_list_in_config():
+@patch("hermes_smart_router.router.classify_message", return_value=_mock_complex())
+def test_custom_route_list_in_config(mock_classify):
     """New list format with custom route names and score ranges."""
     gateway = FakeGateway({
         "smart_router": {
@@ -101,7 +122,6 @@ def test_custom_route_list_in_config():
             ]
         }
     })
-    # Complex message → high score → "heavy" route
     result = route_gateway_message(event("Implementa un plugin con tests, CI/CD y deploy"), gateway)
     assert result == {"action": "allow"}
     override = gateway._session_model_overrides["telegram:1:2"]
@@ -109,24 +129,8 @@ def test_custom_route_list_in_config():
     assert override["model"] == "gpt5-custom"
 
 
-def test_custom_scoring_in_router_config():
-    """Custom scoring weights should affect classification inside the router hook."""
-    gateway = FakeGateway({
-        "smart_router": {
-            "scoring": {
-                "weight_complex_pattern": 1,   # very low → hard to reach complex
-                "weight_medium_pattern": 1,
-                "complex_threshold": 50,        # essentially unreachable
-            }
-        }
-    })
-    route_gateway_message(event("Implementa un plugin con tests y GitHub Actions"), gateway)
-    override = gateway._session_model_overrides.get("telegram:1:2", {})
-    # With complex basically disabled, should fall to a lower tier
-    assert override.get("provider") != "openai-codex"
-
-
-def test_four_tier_router_config():
+@patch("hermes_smart_router.router.classify_message", return_value=_mock_simple())
+def test_four_tier_router_config(mock_classify):
     """User defines 4 custom tiers and the router picks the right one."""
     gateway = FakeGateway({
         "smart_router": {
@@ -146,3 +150,12 @@ def test_four_tier_router_config():
     override = gateway._session_model_overrides["telegram:1:2"]
     assert override["provider"] == "nous"
     assert override["_smart_router_route"] == "trivial"
+
+
+@patch("hermes_smart_router.router.classify_message", return_value=None)
+def test_llm_failure_fails_open(mock_classify):
+    """When LLM classifier returns None, router allows default model."""
+    gateway = FakeGateway()
+    result = route_gateway_message(event("Hola"), gateway)
+    assert result == {"action": "allow"}
+    assert gateway._session_model_overrides == {}

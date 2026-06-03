@@ -1,4 +1,8 @@
-"""Gateway hook implementation for Hermes Smart Router."""
+"""Gateway hook implementation for Hermes Smart Router.
+
+All classification is done via LLM (no regex fallback).  If the LLM
+call fails the router skips and lets Hermes use its default model.
+"""
 
 from __future__ import annotations
 
@@ -6,24 +10,25 @@ import logging
 import os
 from typing import Any, Optional, List
 
-from .classifier import classify_message, llm_classify_message
-from .config import load_config, Route, ScoringConfig, PatternConfig
+from .classifier import classify_message
+from .config import load_config, Route
 
 logger = logging.getLogger(__name__)
 
 _ALLOW = {"action": "allow"}
 _SKIP = {"action": "skip"}
 
-# Store routing decisions on the gateway object so the transform_llm_output
-# hook can read them. Key: session_key, Value: routing info dict.
-_ROUTING_DECISIONS_ATTR = "_smart_router_decisions"
+# Module-level routing decisions store shared between the
+# pre_gateway_dispatch and transform_llm_output hooks.
+# Key: session_key (str), Value: routing info dict.
+# This avoids depending on gateway being passed to transform_llm_output,
+# which Hermes does not include in that hook's kwargs.
+_ROUTING_DECISIONS: dict[str, dict] = {}
 
 
-def _get_decisions_store(gateway: Any) -> dict:
-    """Get or create the routing decisions dict on the gateway object."""
-    if not hasattr(gateway, _ROUTING_DECISIONS_ATTR):
-        setattr(gateway, _ROUTING_DECISIONS_ATTR, {})
-    return getattr(gateway, _ROUTING_DECISIONS_ATTR)
+def _get_decisions_store(gateway: Any = None) -> dict:
+    """Return the module-level routing decisions dict."""
+    return _ROUTING_DECISIONS
 
 
 def _safe_get_session_key(gateway: Any, source: Any) -> Optional[str]:
@@ -47,7 +52,7 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
     """Handle /smart-router slash commands. Returns action dict or None.
 
     Delegates display/formatting to :mod:`hermes_smart_router.commands`.
-    Toggle commands (dry-run, footer, classifier) remain here because they
+    Toggle commands (dry-run, footer) remain here because they
     modify runtime gateway state.
     """
     text = (event.text or "").strip()
@@ -73,12 +78,8 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
             pass  # classifier with a message: just display
         return _reply_or_rewrite(gateway, source, response)
 
-    # ── Legacy / toggle commands (modify runtime state) ──
-    if subcommand == "status" or subcommand == "":
-        # Already handled by commands.py above — but keep fallback
-        return _SKIP
-
-    elif subcommand.startswith("dry-run"):
+    # ── Toggle commands (modify runtime state) ──
+    if subcommand.startswith("dry-run"):
         arg = subcommand[len("dry-run"):].strip().lower()
         if arg in ("on", "true", "1", "enable"):
             _toggle_config(gateway, "dry_run", True)
@@ -102,21 +103,7 @@ def _handle_slash_command(event: Any, gateway: Any) -> Optional[dict]:
         else:
             return _reply_or_rewrite(gateway, source, f"Usage: `/smart-router footer on|off`\nCurrent: {'on' if cfg.show_route_footer else 'off'}")
 
-    elif subcommand.startswith("classifier"):
-        arg = subcommand[len("classifier"):].strip().lower()
-        if arg in ("llm", "on", "true", "1", "enable"):
-            _toggle_config(gateway, "llm_classifier_enabled", True)
-            return _reply_or_rewrite(gateway, source, "🤖 Smart Router classifier: **LLM** (with regex fallback)")
-        elif arg in ("regex", "off", "false", "0", "disable"):
-            _toggle_config(gateway, "llm_classifier_enabled", False)
-            return _reply_or_rewrite(gateway, source, "📋 Smart Router classifier: **regex only**")
-        elif arg:
-            return _reply_or_rewrite(gateway, source, _format_classification_preview(arg, cfg, title="📋 Smart Router classifier"))
-        else:
-            return _reply_or_rewrite(gateway, source, f"Usage: `/smart-router classifier llm|regex` or `/smart-router classifier <message>`\nCurrent: {'llm' if cfg.llm_classifier_enabled else 'regex'}")
-
     elif subcommand == "help":
-        # Already handled by commands.py above — keep fallback
         return _SKIP
 
     return _SKIP
@@ -150,24 +137,24 @@ def _reply_or_rewrite(gateway: Any, source: Any, message: str) -> dict:
 
 def _format_classification_preview(text: str, cfg: Any, title: str = "Smart Router") -> str:
     """Return a human-readable route preview without applying an override."""
-    if cfg.llm_classifier_enabled:
-        classification = llm_classify_message(
-            text,
-            provider=cfg.llm_classifier_provider,
-            model=cfg.llm_classifier_model,
-            scoring=cfg.scoring,
-            patterns=cfg.patterns,
+    classification = classify_message(
+        text,
+        provider=cfg.llm_classifier_provider,
+        model=cfg.llm_classifier_model,
+    )
+
+    if classification is None:
+        return (
+            f"{title}\n"
+            f"⚠️ LLM classifier unavailable — could not classify message.\n"
+            f"Check that `{cfg.llm_classifier_provider.upper()}_API_KEY` is set and the provider is reachable."
         )
-        mode = "llm"
-    else:
-        classification = classify_message(text, scoring=cfg.scoring, patterns=cfg.patterns)
-        mode = "regex"
 
     route = cfg.route_for_score(classification.score)
     return (
         f"{title}\n"
         f"{route.emoji} {route.name} → `{route.provider}/{route.model}` (score: {classification.score})\n"
-        f"Mode: {mode}\n"
+        f"Mode: LLM ({cfg.llm_classifier_provider}/{cfg.llm_classifier_model})\n"
         f"Reason: {classification.reason}"
     )
 
@@ -294,9 +281,8 @@ def route_gateway_message(event: Any = None, gateway: Any = None,
                           session_store: Any = None, **kwargs: Any) -> dict:
     """Route one inbound gateway message to a provider/model.
 
-    This hook must fail open. If anything about the Hermes version or gateway
-    payload differs from what we expect, we return allow and let Hermes use its
-    normal model/fallback configuration.
+    Classification is done via LLM (no regex fallback). If the LLM call
+    fails, the router allows the message through with Hermes' default model.
     """
     try:
         if event is None or gateway is None:
@@ -334,27 +320,25 @@ def route_gateway_message(event: Any = None, gateway: Any = None,
             logger.info("Smart router respecting existing manual /model override for session %s", session_key)
             return _ALLOW
 
-        # Classification — optionally use LLM for uncertain cases
-        if cfg.llm_classifier_enabled:
-            classification = llm_classify_message(
-                text,
-                provider=cfg.llm_classifier_provider,
-                model=cfg.llm_classifier_model,
-                scoring=cfg.scoring,
-                patterns=cfg.patterns,
-            )
-        else:
-            classification = classify_message(text, scoring=cfg.scoring, patterns=cfg.patterns)
+        # --- LLM Classification (always — no regex fallback) ---
+        classification = classify_message(
+            text,
+            provider=cfg.llm_classifier_provider,
+            model=cfg.llm_classifier_model,
+        )
 
-        # Route by score — uses the new parametrizable score-range model
+        if classification is None:
+            logger.warning(
+                "Smart router: LLM classification failed for session=%s (provider=%s model=%s). "
+                "Letting Hermes use default model.",
+                session_key, cfg.llm_classifier_provider, cfg.llm_classifier_model,
+            )
+            return _ALLOW
+
+        # Route by score
         route = cfg.route_for_score(classification.score)
         override = route.as_override()
         runtime = _resolve_route_runtime(route)
-        # Always include api_key/base_url/api_mode in the override,
-        # even if empty.  The Hermes gateway skips None values in
-        # _apply_session_model_override but NOT empty strings — an
-        # empty api_key forces the agent to resolve credentials fresh
-        # for the target provider instead of reusing the global one.
         for key in ("api_key", "base_url", "api_mode"):
             override[key] = runtime.get(key, "")
         override["_smart_router_reason"] = classification.reason
@@ -390,13 +374,14 @@ def route_gateway_message(event: Any = None, gateway: Any = None,
             evict(session_key)
 
         logger.info(
-            "Smart router applied: session=%s complexity=%s route=%s provider=%s model=%s score=%s",
+            "Smart router applied (LLM): session=%s complexity=%s route=%s provider=%s model=%s score=%s reason=%s",
             session_key,
             classification.complexity,
             route.name,
             route.provider,
             route.model,
             classification.score,
+            classification.reason,
         )
         return _ALLOW
     except Exception:
@@ -417,31 +402,56 @@ def transform_llm_output(response_text: str = "", session_id: str = "",
     and appends a small italicized footer showing which route was chosen.
     """
     try:
-        if not response_text:
+        if not response_text or not session_id:
+            logger.debug("Smart router footer: empty response_text or session_id")
             return None
 
+        decisions = _get_decisions_store()
+        # TEMP LOG: always log to diagnose session_id mismatch
+        logger.info("Smart router footer DEBUG: session_id=%r stored_keys=%s", session_id, list(decisions.keys()))
+
+        # Try exact match first
+        info = decisions.get(session_id)
+
+        # Fallback: try suffix/prefix match since session_id may differ between hooks
+        if info is None:
+            for key, value in decisions.items():
+                if key.endswith(session_id) or session_id.endswith(key) or key == session_id:
+                    info = value
+                    logger.info("Smart router footer: matched via fallback key=%s", key)
+                    break
+
+        if info is None:
+            logger.info("Smart router footer: no decision found for session_id=%r", session_id)
+            return None
+
+        decisions.pop(session_id, None)  # One-shot: clean up after reading
+        # Also clean up any fallback-matched key
+        for key in list(decisions.keys()):
+            if key.endswith(session_id) or session_id.endswith(key):
+                decisions.pop(key, None)
+                break
+
+        # Check show_route_footer
         gateway = kwargs.get("gateway")
-        if gateway is None:
-            return None
+        if gateway is not None:
+            try:
+                cfg = _get_effective_config(gateway)
+                if not cfg.show_route_footer:
+                    return None
+            except Exception:
+                pass
 
-        cfg = _get_effective_config(gateway)
-        if not cfg.show_route_footer:
-            return None
-
-        decisions = _get_decisions_store(gateway)
-        if session_id not in decisions:
-            return None
-
-        info = decisions.pop(session_id)  # One-shot: clean up after reading
         route_name = info["complexity"]
         provider = info["provider"]
         route_model = info["model"]
         score = info["score"]
-        emoji = info.get("emoji", "⚪")
+        emoji = info.get("emoji", "\u26aa")
 
-        footer = f"\n\n---\n{emoji} *Smart Router: {route_name} → `{provider}/{route_model}` (score: {score})*"
+        footer = f"\n\n---\n{emoji} *Smart Router: {route_name} \u2192 `{provider}/{route_model}` (score: {score})*"
 
+        logger.info("Smart router footer appended: %s", route_name)
         return response_text + footer
     except Exception:
-        logger.debug("Smart router footer hook failed (non-fatal)")
+        logger.exception("Smart router footer hook failed (non-fatal)")
         return None

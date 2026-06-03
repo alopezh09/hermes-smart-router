@@ -43,49 +43,23 @@ def test_new_list_format():
     })
     cfg = load_config(gateway)
     assert len(cfg.routes) == 3
-    # Score 0 → quick (first match)
     assert cfg.route_for_score(0).name == "quick"
     assert cfg.route_for_score(0).provider == "nous"
-    # Score 3 → normal
     assert cfg.route_for_score(3).name == "normal"
-    # Score 6 → heavy
     assert cfg.route_for_score(6).name == "heavy"
 
 
-def test_custom_scoring_weights_in_config():
-    """Custom scoring weights loaded from config."""
+def test_llm_classifier_config_from_yaml():
+    """LLM classifier provider and model are configurable from config.yaml."""
     gateway = FakeGateway({
         "smart_router": {
-            "scoring": {
-                "weight_complex_pattern": 10,
-                "weight_medium_pattern": 5,
-                "complex_threshold": 10,
-                "medium_threshold": 4,
-            }
+            "llm_classifier_provider": "openai-codex",
+            "llm_classifier_model": "gpt-4o-mini",
         }
     })
     cfg = load_config(gateway)
-    assert cfg.scoring.weight_complex_pattern == 10
-    assert cfg.scoring.weight_medium_pattern == 5
-    assert cfg.scoring.complex_threshold == 10
-    assert cfg.scoring.medium_threshold == 4
-
-
-def test_custom_patterns_in_config():
-    """Custom regex patterns loaded from config."""
-    gateway = FakeGateway({
-        "smart_router": {
-            "patterns": {
-                "complex": ["urgente", "crítico"],
-                "medium": ["consulta"],
-                "simple": ["ok", "gracias"],
-            }
-        }
-    })
-    cfg = load_config(gateway)
-    assert "urgente" in cfg.patterns.complex
-    assert "consulta" in cfg.patterns.medium
-    assert "ok" in cfg.patterns.simple
+    assert cfg.llm_classifier_provider == "openai-codex"
+    assert cfg.llm_classifier_model == "gpt-4o-mini"
 
 
 def test_legacy_format_with_new_keys():
@@ -111,6 +85,9 @@ def test_no_config_returns_defaults():
     assert cfg.enabled is True
     assert len(cfg.routes) == 3
     assert cfg.route_for_score(0).provider == "nous"
+    # Default LLM classifier should be nous/openrouter/owl-alpha (free)
+    assert cfg.llm_classifier_provider == "nous"
+    assert cfg.llm_classifier_model == "openrouter/owl-alpha"
 
 
 def test_route_names_property():

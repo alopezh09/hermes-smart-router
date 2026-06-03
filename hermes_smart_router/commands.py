@@ -11,8 +11,6 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from .config import (
     Route,
     RouterConfig,
-    ScoringConfig,
-    PatternConfig,
     load_config,
     DEFAULT_ROUTES,
 )
@@ -43,12 +41,7 @@ def _pad(text: str, width: int, align: str = "left") -> str:
 
 
 def _table_header(cols: List[Tuple[str, int, str]], style: str = "double") -> str:
-    """Render a table header with Unicode box-drawing.
-
-    Args:
-        cols: List of (label, width, alignment) tuples.
-        style: "double" for ╔═╗ or "round" for ╭─╮.
-    """
+    """Render a table header with Unicode box-drawing."""
     box = _BOX
     if style == "round":
         tl, h, t, tr = box["tl"], box["h"], box["t"], box["tr"]
@@ -57,11 +50,8 @@ def _table_header(cols: List[Tuple[str, int, str]], style: str = "double") -> st
         tl, h, t, tr = box["stl"], box["sh"], box["st"], box["str"]
         sl, sv, sr = box["sv"], box["sv"], box["sv"]
 
-    # Top border
     top = tl + t.join(h * (w + 2) for _, w, _ in cols) + tr
-    # Header labels
     labels = sl + sv.join(f" {_pad(label, w, a)} " for label, w, a in cols) + sr
-    # Separator
     sep = box["sl"] + box["sx"].join(box["sh"] * (w + 2) for _, w, _ in cols) + box["sr"]
 
     return f"{top}\n{labels}\n{sep}"
@@ -99,7 +89,7 @@ def format_routes_table(cfg: RouterConfig) -> str:
         ("Route", 12, "left"),
         ("Score", 10, "center"),
         ("Provider", 14, "left"),
-        ("Model", 22, "left"),
+        ("Model", 26, "left"),
     ]
 
     lines = [
@@ -115,7 +105,7 @@ def format_routes_table(cfg: RouterConfig) -> str:
             (route.name, 12, "left"),
             (score_range, 10, "center"),
             (route.provider, 14, "left"),
-            (route.model, 22, "left"),
+            (route.model, 26, "left"),
         ])
         lines.append(row)
         if idx < len(cfg.routes) - 1:
@@ -124,78 +114,8 @@ def format_routes_table(cfg: RouterConfig) -> str:
     lines.append(_table_footer(cols))
     lines.append("```")
     lines.append(f"• Total routes: **{len(cfg.routes)}**")
-    lines.append(f"• Classifier: {'🤖 LLM' if cfg.llm_classifier_enabled else '📋 regex'}")
+    lines.append(f"• Classifier: 🤖 **LLM** (`{cfg.llm_classifier_provider}/{cfg.llm_classifier_model}`)")
     lines.append(f"• Dry-run: {'🔬 ON' if cfg.dry_run else '🚀 OFF'}  |  Footer: {'✅ ON' if cfg.show_route_footer else '❌ OFF'}")
-    return "\n".join(lines)
-
-
-def format_weights_table(cfg: RouterConfig) -> str:
-    """Render a visual table of scoring weights."""
-    s = cfg.scoring
-    cols: List[Tuple[str, int, str]] = [
-        ("Weight Parameter", 28, "left"),
-        ("Value", 6, "right"),
-        ("Effect", 44, "left"),
-    ]
-
-    weights = [
-        ("weight_complex_pattern", s.weight_complex_pattern,
-         "Points per complex keyword matched (implement, deploy...)"),
-        ("weight_medium_pattern", s.weight_medium_pattern,
-         "Points per medium keyword matched (explain, analyze...)"),
-        ("weight_simple_pattern", s.weight_simple_pattern,
-         "Points per simple keyword (negative = reduces score)"),
-        ("weight_code_block", s.weight_code_block,
-         "Added if message contains code blocks (```)"),
-        ("weight_very_long", s.weight_very_long,
-         "Added if message has ≥80 words"),
-        ("weight_long", s.weight_long,
-         "Added if message has ≥35 words"),
-        ("weight_requirement_list", s.weight_requirement_list,
-         "Per bullet/numbered/list marker (max 3)"),
-    ]
-
-    lines = [
-        "**Smart Router — Scoring Weights**",
-        "```",
-        _table_header(cols, style="double"),
-    ]
-
-    for idx, (name, value, desc) in enumerate(weights):
-        row = _table_row([
-            (name, 28, "left"),
-            (str(value), 6, "right"),
-            (desc, 44, "left"),
-        ])
-        lines.append(row)
-        if idx < len(weights) - 1:
-            lines.append(_table_separator(cols))
-
-    lines.append(_table_footer(cols))
-    lines.append("```")
-    lines.append("")
-    lines.append("**Thresholds:**")
-    lines.append(f"• Complex: score ≥ **{s.complex_threshold}**  |  Medium: score ≥ **{s.medium_threshold}**")
-    return "\n".join(lines)
-
-
-def format_patterns_table(cfg: RouterConfig) -> str:
-    """Render the regex patterns for each complexity tier."""
-    p = cfg.patterns
-
-    lines = ["**Smart Router — Regex Patterns**"]
-
-    for tier, emoji, patterns_list in [
-        ("complex", "🔴", p.complex),
-        ("medium", "🟡", p.medium),
-        ("simple", "🟢", p.simple),
-    ]:
-        lines.append(f"\n{emoji} **{tier.upper()}** ({len(patterns_list)} patterns)")
-        for pat in patterns_list[:12]:  # Show first 12, then summarize
-            lines.append(f"  • `{pat}`")
-        if len(patterns_list) > 12:
-            lines.append(f"  • ... and {len(patterns_list) - 12} more")
-
     return "\n".join(lines)
 
 
@@ -223,7 +143,6 @@ def discover_hermes_models(gateway: Any) -> List[Dict[str, str]]:
     if isinstance(config, Mapping):
         config_dict = config
     else:
-        # Hermes config objects often expose dict-like access
         config_dict = {k: getattr(config, k, None) for k in dir(config) if not k.startswith("_")}
 
     def _add(provider: str, model: str, source: str) -> None:
@@ -325,25 +244,6 @@ def _infer_available_providers(gateway: Any) -> List[str]:
     return providers
 
 
-def _generate_route_yaml(route: Route) -> str:
-    """Generate a YAML snippet for a single route."""
-    lines = [
-        f'  - name: "{route.name}"',
-        f"    emoji: \"{route.emoji}\"",
-        f"    min_score: {route.min_score}",
-        f"    max_score: {route.max_score}",
-        f'    provider: "{route.provider}"',
-        f'    model: "{route.model}"',
-    ]
-    if route.api_key:
-        lines.append(f'    api_key: "{route.api_key}"')
-    if route.base_url:
-        lines.append(f'    base_url: "{route.base_url}"')
-    if route.api_mode:
-        lines.append(f'    api_mode: "{route.api_mode}"')
-    return "\n".join(lines)
-
-
 def generate_wizard_guide(gateway: Any) -> str:
     """Generate a step-by-step configuration wizard as a chat message.
 
@@ -353,7 +253,6 @@ def generate_wizard_guide(gateway: Any) -> str:
     3. Guides the user through adding routes to config.yaml
     """
     cfg = load_config(gateway)
-    available_providers = _infer_available_providers(gateway)
     available_models = discover_hermes_models(gateway)
 
     lines = [
@@ -363,14 +262,18 @@ def generate_wizard_guide(gateway: Any) -> str:
         "You'll need to edit `~/.hermes/config.yaml` — but don't worry, I'll give you",
         "ready-to-paste YAML snippets.",
         "",
+        "**Classification:** All messages are classified via 🤖 **LLM** "
+        f"(`{cfg.llm_classifier_provider}/{cfg.llm_classifier_model}`).",
+        "Make sure your API key is set (see Step 2 below).",
+        "",
     ]
 
-    # Step 0: Show available models
+    # Step 1: Show available models
     lines.append("───  📋  Step 1: Available Models  ───")
     lines.append("")
-    lines.append("Here are the models already configured in your Hermes:")
 
     if available_models:
+        lines.append("Here are the models already configured in your Hermes:")
         for m in available_models:
             src = {"primary": "⭐ primary", "fallback": "↩️  fallback", "custom": "⚙️  custom"}.get(m["source"], m["source"])
             lines.append(f"  • `{m['provider']}/{m['model']}` ({src})")
@@ -381,16 +284,26 @@ def generate_wizard_guide(gateway: Any) -> str:
     lines.append("**Edit your config:** `hermes config edit`  or  `nano ~/.hermes/config.yaml`")
     lines.append("")
 
-    # Step 1: Minimal config example
-    lines.append("───  🎯  Step 2: Add routes to config.yaml  ───")
+    # Step 2: API key for LLM classifier
+    lines.append("───  🔑  Step 2: API Key for LLM Classifier  ───")
     lines.append("")
-    lines.append("Add a `smart_router` section with a `routes` list:")
+    lines.append(f"The classifier uses `{cfg.llm_classifier_provider}` as its LLM provider.")
+    lines.append("Make sure the corresponding API key is set:")
+    provider_upper = cfg.llm_classifier_provider.upper().replace("-", "_")
+    lines.append(f"```bash")
+    lines.append(f"# Add to ~/.hermes/.env:")
+    lines.append(f"{provider_upper}_API_KEY=your-key-here")
+    lines.append(f"```")
+    lines.append("")
 
-    # Generate example based on detected providers
+    # Step 3: Routes config
+    lines.append("───  🎯  Step 3: Add routes to config.yaml  ───")
+    lines.append("")
+
     if len(available_models) >= 3:
         r0, r1, r2 = available_models[0], available_models[1], available_models[2]
     else:
-        r0 = {"provider": "nous", "model": "deepseek-v4-free"}
+        r0 = {"provider": "nous", "model": "openrouter/owl-alpha"}
         r1 = {"provider": "opencode-go", "model": "deepseek-v4-pro"}
         r2 = {"provider": "openai-codex", "model": "gpt-5.5"}
 
@@ -400,7 +313,8 @@ def generate_wizard_guide(gateway: Any) -> str:
         "  enabled: true",
         "  show_route_footer: true",
         "  dry_run: false",
-        "  llm_classifier_enabled: false",
+        f'  llm_classifier_provider: "{cfg.llm_classifier_provider}"',
+        f'  llm_classifier_model: "{cfg.llm_classifier_model}"',
         "  routes:",
         f'    - name: "simple"',
         f"      emoji: \"🟢\"",
@@ -427,51 +341,7 @@ def generate_wizard_guide(gateway: Any) -> str:
     lines.extend(example_yaml)
 
     lines.append("")
-    lines.append("───  ⚖️  Step 3: Customize scoring (optional)  ───")
-    lines.append("")
-    lines.append("You can tweak the scoring weights under `smart_router.scoring`:")
-
-    scoring_yaml = [
-        "```yaml",
-        "smart_router:",
-        "  scoring:",
-        "    weight_complex_pattern: 4",
-        "    weight_medium_pattern: 2",
-        "    weight_simple_pattern: -3",
-        "    weight_code_block: 5",
-        "    weight_very_long: 3",
-        "    weight_long: 2",
-        "    weight_requirement_list: 1",
-        "    complex_threshold: 6",
-        "    medium_threshold: 2",
-        "```",
-    ]
-    lines.extend(scoring_yaml)
-
-    lines.append("")
-    lines.append("───  🏷️  Step 4: Customize patterns (optional)  ───")
-    lines.append("")
-    lines.append("Add custom regex patterns for each tier under `smart_router.patterns`:")
-
-    patterns_yaml = [
-        "```yaml",
-        "smart_router:",
-        "  patterns:",
-        "    complex:",
-        '      - "\\bimplement(a|ar)?\\b"',
-        '      - "\\bdeploy\\b"',
-        '      - "\\bplugin\\b"',
-        "    medium:",
-        '      - "\\bexplica(r|me)?\\b"',
-        '      - "\\banaliza(r)?\\b"',
-        "    simple:",
-        '      - "^(ok|dale|gracias|hola)"',
-        "```",
-    ]
-    lines.extend(patterns_yaml)
-
-    lines.append("")
-    lines.append("───  ✅  Step 5: Apply & verify  ───")
+    lines.append("───  ✅  Step 4: Apply & verify  ───")
     lines.append("")
     lines.append("After editing `config.yaml`, restart the gateway:")
     lines.append("```bash")
@@ -499,168 +369,159 @@ def format_help() -> str:
         "• `/smart-router` — show status + route table\n"
         "• `/smart-router routes` — visual table of all routes\n"
         "• `/smart-router models` — discover available Hermes models\n"
-        "• `/smart-router weights` — show scoring weights\n"
-        "• `/smart-router patterns` — show regex patterns\n\n"
-        "🧪 **Test & Classify**\n"
-        "• `/smart-router classifier <message>` — classify a message\n"
-        "• `/smart-router dry-run <message>` — preview which route would be used\n\n"
-        "⚙️ **Configure**\n"
-        "• `/smart-router wizard` — step-by-step setup guide\n"
+        "• `/smart-router wizard` — step-by-step setup guide\n\n"
+        "🔧 **Control**\n"
         "• `/smart-router dry-run on|off` — toggle dry-run mode\n"
-        "• `/smart-router footer on|off` — toggle route footer\n"
-        "• `/smart-router classifier llm|regex` — switch classifier mode\n"
-        "• `/smart-router routes add-snippet <name> <min> <max> <provider> <model> [emoji]` — generate config snippet\n\n"
-        "📖 **Help**\n"
-        "• `/smart-router help` — this message"
+        "• `/smart-router dry-run <message>` — preview classification\n"
+        "• `/smart-router footer on|off` — toggle route footer\n\n"
+        "🧪 **Test**\n"
+        "• `/smart-router classifier <message>` — classify a message (LLM)\n\n"
+        "📦 **Route Management**\n"
+        "• `/smart-router routes add-snippet <name> <min> <max> <provider> <model> [emoji]`\n"
+        "  Generate a ready-to-paste YAML snippet for a new route\n"
+        "• `/smart-router routes remove-snippet <name>`\n"
+        "  Generate instructions to remove a route\n\n"
+        "⚙️ **Classification:** All messages are classified via 🤖 **LLM** "
+        "(no regex fallback). Configure the LLM provider and model via\n"
+        "`llm_classifier_provider` and `llm_classifier_model` in your\n"
+        "`smart_router` config section."
     )
 
 
 # ---------------------------------------------------------------------------
-# Route snippet generator (for "add" command)
+# Route snippet generators
 # ---------------------------------------------------------------------------
 
-def generate_add_route_snippet(
-    name: str,
-    min_score: str,
-    max_score: str,
-    provider: str,
-    model: str,
-    emoji: str = "",
-    gateway: Any = None,
-) -> str:
-    """Generate a ready-to-paste YAML snippet for adding a new route.
-
-    Also validates that *provider* is available in Hermes config (if gateway provided).
-    """
-    try:
-        mins = int(min_score)
-    except ValueError:
-        mins = 0
-    try:
-        maxs = int(max_score)
-    except ValueError:
-        maxs = 999
-
-    display_emoji = emoji if emoji else {"simple": "🟢", "medium": "🟡", "complex": "🔴"}.get(name.lower(), "⚪")
-
+def _generate_route_yaml(route: Route) -> str:
+    """Generate a YAML snippet for a single route."""
     lines = [
-        f"**Add this route to `~/.hermes/config.yaml`**",
-        "",
-        "```yaml",
-        "smart_router:",
-        "  routes:",
-        f'    - name: "{name}"',
-        f"      emoji: \"{display_emoji}\"",
-        f"      min_score: {mins}",
-        f"      max_score: {maxs}",
-        f'      provider: "{provider}"',
-        f'      model: "{model}"',
-        "```",
-        "",
+        f'  - name: "{route.name}"',
+        f"    emoji: \"{route.emoji}\"",
+        f"    min_score: {route.min_score}",
+        f"    max_score: {route.max_score}",
+        f'    provider: "{route.provider}"',
+        f'    model: "{route.model}"',
     ]
-
-    # Validate provider availability
-    if gateway is not None:
-        available = discover_hermes_models(gateway)
-        matching = [m for m in available if m["provider"] == provider]
-        if matching:
-            lines.append(f"✅ Provider `{provider}` is available in your Hermes config")
-            lines.append(f"   Model(s): {', '.join(m['model'] for m in matching)}")
-        else:
-            lines.append(f"⚠️  Provider `{provider}` was NOT found in your Hermes config.")
-            lines.append(f"   Make sure it's configured or the route won't work.")
-            if available:
-                lines.append(f"   Available providers: {', '.join(set(m['provider'] for m in available))}")
-
-    lines.append("")
-    lines.append("After adding, restart: `hermes gateway restart`")
+    if route.api_key:
+        lines.append(f'    api_key: "{route.api_key}"')
+    if route.base_url:
+        lines.append(f'    base_url: "{route.base_url}"')
+    if route.api_mode:
+        lines.append(f'    api_mode: "{route.api_mode}"')
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Command dispatcher
+# Main slash command dispatcher
 # ---------------------------------------------------------------------------
 
 def handle_slash_command(text: str, gateway: Any, source: Any, cfg: RouterConfig) -> Optional[str]:
-    """Handle a /smart-router slash command.
+    """Handle /smart-router slash commands. Returns response text or None."""
 
-    Returns a string response to send, or None if not a command.
-    """
     if not text.startswith("/smart-router"):
         return None
 
     parts = text.split(maxsplit=1)
     subcommand = parts[1].strip() if len(parts) > 1 else ""
 
-    # ── Status ──
-    if subcommand == "status" or subcommand == "":
+    # /smart-router or /smart-router status
+    if subcommand == "" or subcommand == "status":
         return format_routes_table(cfg)
 
-    # ── Routes ──
+    # /smart-router routes
     if subcommand == "routes":
         return format_routes_table(cfg)
 
-    # ── Routes add-snippet ──
-    if subcommand.startswith("routes add-snippet"):
-        args = subcommand[len("routes add-snippet"):].strip().split()
-        if len(args) < 5:
-            return (
-                "Usage: `/smart-router routes add-snippet <name> <min_score> <max_score> <provider> <model> [emoji]`\n\n"
-                "Example: `/smart-router routes add-snippet premium 8 999 openai-codex gpt-5.5 🔴`\n\n"
-                "This generates a YAML snippet you can paste into `~/.hermes/config.yaml`."
-            )
-        name = args[0]
-        mins = args[1]
-        maxs = args[2]
-        prov = args[3]
-        mod = args[4]
-        emoji = args[5] if len(args) > 5 else ""
-        return generate_add_route_snippet(name, mins, maxs, prov, mod, emoji, gateway)
-
-    # ── Routes remove-snippet ──
-    if subcommand.startswith("routes remove-snippet"):
-        route_name = subcommand[len("routes remove-snippet"):].strip()
-        if not route_name:
-            route_names = [r.name for r in cfg.routes]
-            return (
-                "Usage: `/smart-router routes remove-snippet <name>`\n\n"
-                f"Current routes: {', '.join(route_names)}\n\n"
-                "This shows instructions for removing a route from `~/.hermes/config.yaml`."
-            )
-        # Find the route
-        target = None
-        for r in cfg.routes:
-            if r.name.lower() == route_name.lower():
-                target = r
-                break
-        if target is None:
-            route_names = [r.name for r in cfg.routes]
-            return f"❌ Route `{route_name}` not found. Current routes: {', '.join(route_names)}"
-        return (
-            f"**Remove route `{target.name}`**\n\n"
-            f"Edit `~/.hermes/config.yaml` and delete this route from the `smart_router.routes` list:\n\n"
-            f"```yaml\n{_generate_route_yaml(target)}\n```\n\n"
-            f"After removing, restart: `hermes gateway restart`"
-        )
-
-    # ── Models ──
+    # /smart-router models
     if subcommand == "models":
         return format_models_table(gateway)
 
-    # ── Weights ──
-    if subcommand == "weights":
-        return format_weights_table(cfg)
-
-    # ── Patterns ──
-    if subcommand == "patterns":
-        return format_patterns_table(cfg)
-
-    # ── Wizard ──
+    # /smart-router wizard
     if subcommand == "wizard":
         return generate_wizard_guide(gateway)
 
-    # ── Help ──
+    # /smart-router help
     if subcommand == "help":
         return format_help()
+
+    # /smart-router classifier <message>
+    if subcommand.startswith("classifier"):
+        arg = subcommand[len("classifier"):].strip()
+        if arg and arg.lower() not in ("llm", "on", "true", "1", "enable", "regex", "off", "false", "0", "disable"):
+            from .classifier import classify_message
+            classification = classify_message(
+                arg,
+                provider=cfg.llm_classifier_provider,
+                model=cfg.llm_classifier_model,
+            )
+            if classification is None:
+                return (
+                    "📋 **Smart Router classifier**\n\n"
+                    f"⚠️ LLM classifier unavailable — could not classify message.\n"
+                    f"Check that `{cfg.llm_classifier_provider.upper()}_API_KEY` is set."
+                )
+            route = cfg.route_for_score(classification.score)
+            return (
+                "📋 **Smart Router classifier**\n"
+                f"{route.emoji} {route.name} → `{route.provider}/{route.model}` (score: {classification.score})\n"
+                f"Mode: LLM ({cfg.llm_classifier_provider}/{cfg.llm_classifier_model})\n"
+                f"Reason: {classification.reason}"
+            )
+        # Toggle commands handled by router.py
+        return None
+
+    # /smart-router routes add-snippet <name> <min> <max> <provider> <model> [emoji]
+    if subcommand.startswith("routes add-snippet"):
+        args_str = subcommand[len("routes add-snippet"):].strip()
+        if not args_str:
+            return (
+                "Usage: `/smart-router routes add-snippet <name> <min> <max> <provider> <model> [emoji]`\n"
+                "Example: `/smart-router routes add-snippet premium 6 999 openai-codex gpt-5.5 🔴`"
+            )
+
+        args = args_str.split()
+        if len(args) < 5:
+            return (
+                "Usage: `/smart-router routes add-snippet <name> <min> <max> <provider> <model> [emoji]`\n"
+                f"Got {len(args)} args, need at least 5."
+            )
+
+        try:
+            name = args[0]
+            min_s = int(args[1])
+            max_s = int(args[2])
+            provider = args[3]
+            model = args[4]
+            emoji = args[5] if len(args) > 5 else "⚪"
+        except ValueError:
+            return "Error: min_score and max_score must be integers."
+
+        route = Route(name=name, provider=provider, model=model,
+                      min_score=min_s, max_score=max_s, emoji=emoji)
+        snippet = _generate_route_yaml(route)
+        return (
+            "**Add this to your `smart_router.routes` list in `~/.hermes/config.yaml`:**\n\n"
+            "```yaml\n"
+            f"{snippet}\n"
+            "```\n\n"
+            "Then restart the gateway:\n"
+            "```bash\n"
+            "hermes gateway restart\n"
+            "```"
+        )
+
+    # /smart-router routes remove-snippet <name>
+    if subcommand.startswith("routes remove-snippet"):
+        arg = subcommand[len("routes remove-snippet"):].strip()
+        if not arg:
+            return "Usage: `/smart-router routes remove-snippet <name>`"
+
+        return (
+            f"**To remove the `{arg}` route:**\n\n"
+            f"1. Edit `~/.hermes/config.yaml`\n"
+            f"2. Find the route with `name: \"{arg}\"` under `smart_router.routes`\n"
+            f"3. Delete that entire route block\n"
+            f"4. Restart the gateway: `hermes gateway restart`"
+        )
 
     return None
